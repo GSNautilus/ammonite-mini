@@ -27,7 +27,9 @@
 .EXAMPLE
   .\mini.ps1 apk       # android\app\build\outputs\apk\debug\app-debug.apk (Gradle, the SDK, Android Studio's JDK)
   .\mini.ps1 install   # apk, then onto the tablet
-  .\mini.ps1 run       # install, then start it (it plays the default preset)
+  .\mini.ps1 run       # install, then start it: the page from the APK, the default preset playing
+  .\mini.ps1 run -Dev  # the same, the page from this PC (.\mini.ps1 serve in another window): page edits
+                       # need only a reload; kept until a plain run
   .\mini.ps1 bench     # install, start it benching, print the results from logcat
   .\mini.ps1 log       # logcat, the app's lines (Ctrl+C stops)
   .\mini.ps1 shot      # the tablet's screen -> build\shot.png
@@ -43,7 +45,8 @@ param(
     [string]$Action,
     [int]$Port = 8010,
     [string]$Device = '',
-    [string]$Code = ''
+    [string]$Code = '',
+    [switch]$Dev
 )
 
 $ErrorActionPreference = 'Stop'
@@ -131,7 +134,14 @@ switch ($Action) {
     'install' { Install-App }
     'run' {
         Install-App
-        Invoke-Adb shell am start -S -n "$app/.MainActivity"
+        # the page: from this PC (mini.ps1 serve) with -Dev, else from the APK ("" clears a kept one)
+        $url = ''
+        if ($Dev) {
+            $ip  = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -like '192.168.*' } | Select-Object -First 1).IPAddress
+            $url = "http://$($ip):$Port/index.html"
+            Write-Host "page from $url (is .\mini.ps1 serve running?)" -ForegroundColor Cyan
+        }
+        Invoke-Adb shell am start -S -n "$app/.MainActivity" --es url "'$url'"
     }
     'bench' {
         # offline renders on the tablet (about a minute); the results come back through logcat

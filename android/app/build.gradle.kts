@@ -31,8 +31,11 @@ android {
         }
     }
     buildFeatures { prefab = true }
+    // the page straight from the repo's web/ (no copy): served from the APK as https://appassets.androidplatform.net
+    sourceSets { getByName("main") { assets.directories.add("../../web") } }
 }
 
 dependencies {
     implementation("com.google.oboe:oboe:1.11.0")
+    implementation("androidx.webkit:webkit:1.17.1") // WebMessageListener, WebViewAssetLoader
 }

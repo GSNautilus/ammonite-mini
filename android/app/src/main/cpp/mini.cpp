@@ -1,4 +1,5 @@
-/* Ammonite Mini, phase 1: the engine playing through Oboe, and a bench (docs/MINI_PLAN.md section 4).
+/* Ammonite Mini's native side: the engine playing through Oboe, the bridge to the page, and a bench
+   (docs/MINI_PLAN.md sections 3 and 4).
 
    Play: an Oboe stream (AAudio, low latency, exclusive if granted, float stereo at the device's rate) whose
    callback runs ammo_process with no host clock and Sync on Internal, so the engine's own clock runs. The
@@ -10,7 +11,12 @@
    patches (the default preset; 16 channels with every effect on; 16 chord channels) and reports the time each
    took, as a share of real time.
 
-   JNI: com.ammonite.mini.Native start / stop / status / bench (strings for the screen and logcat, tag AmmoMini). */
+   The bridge (bridge/Bridge.hpp) on the same engine: the page's messages in, JavaScript out through the Kotlin
+   host's eval; its transport decides whether the callback runs the engine or outputs silence. Every bridge call
+   comes from the UI thread (the WebView's messages, Choreographer's frames, the pickers' results), so the host's
+   methods are called back on it, with that call's JNIEnv.
+
+   JNI: com.ammonite.mini.Native (Native.kt). Logcat tag AmmoMini. */
 #include <jni.h>
 #include <oboe/Oboe.h>
 #include <android/log.h>
@@ -29,6 +35,8 @@
 #include <vector>
 
 #include "api.h"
+#include "Bridge.hpp"
+#include "Engine.hpp"
 
 #define LOG(...) __android_log_print(ANDROID_LOG_INFO, "AmmoMini", __VA_ARGS__)
 
@@ -112,6 +120,8 @@ class Player : public oboe::AudioStreamDataCallback, public oboe::AudioStreamErr
 public:
     bool hint = true; // Android's performance hint (ADPF, through Oboe): the callback's times keep the clocks up
     int patch = 0; // what start() plays: 0 the default, 1 sixteen channels with every effect, 2 sixteen chord channels
+    /** The engine to play, and the bridge whose transport says whether it plays (before start). */
+    void attach(void* engine, ammo::Bridge* bridge) { engine_ = engine; bridge_ = bridge; }
     std::string start()
     {
         std::lock_guard<std::mutex> lk(mu_);
@@ -130,6 +140,8 @@ public:
         stream_->setPerformanceHintEnabled(hint);
         rate_ = stream_->getSampleRate();
         if(!engine_) { engine_ = ammo_create(rate_, kMaxBlock); (patch == 1 ? patchFull : patch == 2 ? patchChords : patchDefault)(engine_); }
+        auto* eng = static_cast<ammo::Engine*>(engine_);
+        if(eng->SampleRate() != rate_) eng->SetSampleRate(rate_); // the device's rate (the stream is not running yet)
         L_.assign(kMaxBlock, 0.f); R_.assign(kMaxBlock, 0.f);
         pinned_ = false; resetStats();
         t0_ = Clock::now();
@@ -162,6 +174,11 @@ public:
         if(!pinned_) { core_ = pinToBigCores(); pinned_ = true; }
         const auto t0 = Clock::now();
         float* out = static_cast<float*>(data);
+        if(bridge_ != nullptr && !bridge_->Playing()) // stopped: silence, the engine waits where it was
+        {
+            std::memset(out, 0, sizeof(float) * 2 * (size_t)frames);
+            return oboe::DataCallbackResult::Continue;
+        }
         for(int done = 0; done < frames;)
         {
             const int n = frames - done < kMaxBlock ? frames - done : kMaxBlock;
@@ -205,6 +222,7 @@ private:
     std::mutex mu_;
     std::shared_ptr<oboe::AudioStream> stream_;
     void* engine_ = nullptr;
+    ammo::Bridge* bridge_ = nullptr;
     int rate_ = 48000;
     std::vector<float> L_, R_;
     bool pinned_ = false;
@@ -251,9 +269,120 @@ std::string benchOne(const char* name, void (*patch)(void*), int block = 192)
     return buf;
 }
 
+/* ---------------------------------------------------------------- the bridge's host: Kotlin */
+thread_local JNIEnv* tEnv = nullptr; // the UI thread's, during a call from it
+struct JniHost
+{
+    jobject   obj = nullptr; // a global ref
+    jmethodID eval = nullptr, pick = nullptr, recorded = nullptr;
+};
+JniHost       gHost;
+void*         gEngine = nullptr;
+ammo::Bridge* gBridge = nullptr;
+
+void hostEval(void*, const char* js)
+{
+    if(!tEnv || !gHost.obj) return;
+    jstring s = tEnv->NewStringUTF(js);
+    tEnv->CallVoidMethod(gHost.obj, gHost.eval, s);
+    tEnv->DeleteLocalRef(s);
+}
+void hostPick(void*, int save, const char* name)
+{
+    if(!tEnv || !gHost.obj) return;
+    jstring s = tEnv->NewStringUTF(name);
+    tEnv->CallVoidMethod(gHost.obj, gHost.pick, (jboolean)(save != 0), s);
+    tEnv->DeleteLocalRef(s);
+}
+void hostRecorded(void*, const char* path, int ok)
+{
+    if(!tEnv || !gHost.obj) return;
+    jstring s = tEnv->NewStringUTF(path);
+    tEnv->CallVoidMethod(gHost.obj, gHost.recorded, s, (jboolean)(ok != 0));
+    tEnv->DeleteLocalRef(s);
+}
+void hostLog(void*, const char* line) { LOG("%s", line); }
+
+std::string str(JNIEnv* env, jstring j)
+{
+    if(!j) return std::string();
+    const char* c = env->GetStringUTFChars(j, nullptr);
+    std::string s(c ? c : "");
+    if(c) env->ReleaseStringUTFChars(j, c);
+    return s;
+}
+/** The thread's JNIEnv for the bridge's callbacks, during one call from Kotlin. */
+struct InCall
+{
+    explicit InCall(JNIEnv* env) { tEnv = env; }
+    ~InCall() { tEnv = nullptr; }
+};
+
 } // namespace
 
 extern "C" {
+/** Once: the engine (the default patch, or the bench's patch 1 / 2), the bridge on it, Kotlin's host object
+ *  (eval(String), pick(Boolean, String), recorded(String, Boolean)) and the folder recordings go to. */
+JNIEXPORT void JNICALL Java_com_ammonite_mini_Native_create(JNIEnv* env, jclass, jobject host, jstring recordDir)
+{
+    if(gBridge) return;
+    jclass c       = env->GetObjectClass(host);
+    gHost.obj      = env->NewGlobalRef(host);
+    gHost.eval     = env->GetMethodID(c, "eval", "(Ljava/lang/String;)V");
+    gHost.pick     = env->GetMethodID(c, "pick", "(ZLjava/lang/String;)V");
+    gHost.recorded = env->GetMethodID(c, "recorded", "(Ljava/lang/String;Z)V");
+    gEngine        = ammo_create(48000, kMaxBlock);
+    (gPlayer.patch == 1 ? patchFull : gPlayer.patch == 2 ? patchChords : patchDefault)(gEngine);
+    AmmoBridgeHost h{nullptr, &hostEval, &hostPick, &hostRecorded, &hostLog};
+    gBridge = new ammo::Bridge(*static_cast<ammo::Engine*>(gEngine), h, str(env, recordDir));
+    gPlayer.attach(gEngine, gBridge);
+    LOG("engine and bridge created; recordings to %s", str(env, recordDir).c_str());
+}
+/** The host object again (a new activity after the old one went). */
+JNIEXPORT void JNICALL Java_com_ammonite_mini_Native_setHost(JNIEnv* env, jclass, jobject host)
+{
+    if(gHost.obj) env->DeleteGlobalRef(gHost.obj);
+    gHost.obj = env->NewGlobalRef(host);
+}
+JNIEXPORT void JNICALL Java_com_ammonite_mini_Native_message(JNIEnv* env, jclass, jstring msg)
+{
+    if(!gBridge) return;
+    InCall in(env);
+    gBridge->OnMessage(str(env, msg).c_str());
+}
+JNIEXPORT void JNICALL Java_com_ammonite_mini_Native_tick(JNIEnv* env, jclass)
+{
+    if(!gBridge) return;
+    InCall in(env);
+    gBridge->Tick();
+}
+JNIEXPORT jbyteArray JNICALL Java_com_ammonite_mini_Native_patchText(JNIEnv* env, jclass)
+{
+    const std::string t = gBridge ? gBridge->PatchText() : std::string();
+    jbyteArray        a = env->NewByteArray((jsize)t.size());
+    env->SetByteArrayRegion(a, 0, (jsize)t.size(), reinterpret_cast<const jbyte*>(t.data()));
+    return a;
+}
+JNIEXPORT void JNICALL Java_com_ammonite_mini_Native_saved(JNIEnv* env, jclass, jstring name, jboolean ok)
+{
+    if(!gBridge) return;
+    InCall in(env);
+    gBridge->Saved(str(env, name), ok);
+}
+JNIEXPORT void JNICALL Java_com_ammonite_mini_Native_opened(JNIEnv* env, jclass, jstring name, jbyteArray text)
+{
+    if(!gBridge) return;
+    InCall in(env);
+    std::string t;
+    if(text)
+    {
+        t.resize((size_t)env->GetArrayLength(text));
+        if(!t.empty())
+            env->GetByteArrayRegion(text, 0, (jsize)t.size(), reinterpret_cast<jbyte*>(&t[0]));
+    }
+    gBridge->Opened(str(env, name), t.data(), t.size());
+}
+
 JNIEXPORT jstring JNICALL Java_com_ammonite_mini_Native_start(JNIEnv* env, jclass) { return env->NewStringUTF(gPlayer.start().c_str()); }
 JNIEXPORT void JNICALL Java_com_ammonite_mini_Native_setPatch(JNIEnv*, jclass, jint k) { gPlayer.patch = k; }
 JNIEXPORT void JNICALL Java_com_ammonite_mini_Native_setHint(JNIEnv*, jclass, jboolean on) { gPlayer.hint = on; }

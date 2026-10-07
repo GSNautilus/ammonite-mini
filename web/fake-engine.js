@@ -13,7 +13,7 @@
    tuning how anything sounds. Space starts and stops. */
 (function () {
   'use strict';
-  if (window.chrome && window.chrome.webview) return; // the real host is here
+  if ((window.chrome && window.chrome.webview) || window.ammoHost) return; // the real host is here
   window.AMMO_DEV = true;
 
   /* ---------------------------------------------- the table (Params.hpp) */

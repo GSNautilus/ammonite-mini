@@ -30,12 +30,13 @@
    A patch file carries the page's own state with the engine's (pageState(), ammo.page: desktop's stage settings,
    kept as they came). Ctrl+S, Ctrl+O and R
    are the page's keys (save, open, record); every other key goes to the host.
-   In a plain browser, dev.html loads fake-engine.js to stand in for the host. */
+   The host: the Android app's bridge (window.ammoHost, a WebMessageListener; bridge/Bridge.hpp), or desktop's
+   WebView2 (window.chrome.webview). In a plain browser, dev.html loads fake-engine.js to stand in for it. */
 (function () {
   'use strict';
   /* the layout: 900 high (0.89 on the tablet's 1333x800), as wide as the window; below 1500 wide, scaled to the width */
   var LAYOUT_H = 900, MIN_W = 1500;
-  var bridge = window.chrome && window.chrome.webview;
+  var bridge = (window.chrome && window.chrome.webview) || window.ammoHost; // desktop's WebView2, or the Android app's
   function send(m) { if (bridge) bridge.postMessage(m); }
 
   /* ------------------------------------------------------------- data */

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Debug builds only: the page may come from the PC while developing (mini.ps1 run -Dev), over plain http. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET" />
+    <application android:usesCleartextTraffic="true" />
+</manifest>

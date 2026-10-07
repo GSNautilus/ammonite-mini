@@ -152,10 +152,46 @@ check(r.tick() == [], "no new frames: no tick")
 r.e.render(2.0)
 check(len(r.tick()[0][1][0]) == 6, "many frames waiting: 6 in one tick")
 
+# ---- small blocks (the tablet's 96-frame bursts): 20 of them fold into 6 frames, hits and timing kept, waves last
+sb = Rig()  # a fresh engine with a bridge, and its twin read frame by frame: the same from the first sample
+sb.say("ready")
+twin = Engine()
+twin.set("sync", 1)
+for e in (sb.e, twin):
+    DLL.ammo_apply_preset(C.c_void_p(e.p), 3)  # Clockwork: three patterns of sixteenths, hits everywhere
+    e.render(0.5, block=96)
+while sb.tick():
+    pass
+twin.frames()
+sb.e.render(20 * 96 / 48000, block=96)
+_, _, ref_frames = twin.render(20 * 96 / 48000, block=96, collect=True)
+sent = sb.tick()[0][1][0]
+check(len(ref_frames) == 20 and len(sent) == 6, "20 blocks of 96 -> a tick of %d frames (%d published)" % (len(sent), len(ref_frames)))
+check(sum(f["bl"] for f in sent) == 20 * 96, "their block counts cover all 20 blocks: %s" % [f["bl"] for f in sent])
+hits_ref = sum(1 for f in ref_frames for s in range(16) if f.ch[s].hit)
+groups, at = [], 0
+for j in range(6):
+    to = (j + 1) * 20 // 6
+    groups.append(ref_frames[at:to])
+    at = to
+want = sum(1 for g in groups for s in range(16) if any(f.ch[s].hit for f in g))
+got = sum(1 for f in sent for c in f["ch"].values() if c["h"])
+check(hits_ref > 0 and got == want, "hits: %d in the 20 blocks, %d frames x channels with one, %d sent" % (hits_ref, want, got))
+check(all("w" not in c for f in sent[:-1] for c in f["ch"].values()) and all("w" in c for c in sent[-1]["ch"].values()),
+      "waves in the last frame only")
+twin.close()
+sb.close()
+
 # ---- the transport: Space down toggles; its repeats and its release do not
 check(DLL.ammo_bridge_playing(r.b) == 1, "playing at the start")
+while r.tick():
+    pass
 r.say("key 1 32 0")
 check(DLL.ammo_bridge_playing(r.b) == 0, "Space: stopped")
+told = r.tick()
+check(len(told) == 1 and told[0][1][0][-1]["p"] == 0 and told[0][1][0][-1]["bl"] == 0,
+      "with no new frame, the next tick still tells the page (the last frame again, p:0)")
+check(r.tick() == [], "and only once")
 r.say("key 1 32 1")
 r.say("key 0 32 0")
 r.say("key 1 65 0")

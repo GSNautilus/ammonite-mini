@@ -1,6 +1,6 @@
 /** Ammonite Mini's bridge (Bridge.hpp): desktop's AmmoniteUI.cpp message handling and ticks, without the window,
- *  the dialogs or the plugin host. The JavaScript it builds is byte for byte desktop's, but for `p` in a tick
- *  (the bridge's transport) and ammo.info's fields. */
+ *  the dialogs or the plugin host. The JavaScript it builds is desktop's, but for ammo.info's fields and the
+ *  ticks: `p` is the bridge's transport, and many small blocks are folded into at most six frames (Tick). */
 #include "Bridge.hpp"
 
 #include "Presets.hpp"
@@ -115,7 +115,11 @@ void Bridge::Log(const std::string& line)
         host_.log(host_.user, line.c_str());
 }
 
-void Bridge::SetPlaying(bool on) { playing_.store(on, std::memory_order_relaxed); }
+void Bridge::SetPlaying(bool on)
+{
+    if(playing_.exchange(on, std::memory_order_relaxed) != on)
+        told_ = false; // the page hears of it with the next tick, even if no frame comes (stopped, none will)
+}
 
 /* ---- page -> bridge */
 void Bridge::OnMessage(const char* msg)
@@ -424,16 +428,67 @@ void Bridge::StopRecording(bool tell)
 }
 
 /* ---- ticks */
+/** Every frame waiting is read; at most kSend go to the page. On the tablet a block is a 96-frame burst, 500
+ *  frames a second, more than desktop's six a tick could carry: the frames left out are folded into the one sent
+ *  after them (its block count covers them, a hit in any of them is its hit, the duck their deepest), so the
+ *  page's timing and note history stay whole. Only the last frame carries the waves (the page keeps a channel's
+ *  wave until one comes), which keeps a tick's JavaScript small. */
 void Bridge::Tick()
 {
     if(wav_.IsOpen())
         DrainTap(engine_.recordTap(), wav_);
-    AmmoFrame frames[6];
-    uint32_t  n = 0;
-    while(n < 6 && engine_.telemetry().read(frames[n]))
-        n++;
-    if(!ready_ || n == 0)
+    uint32_t got = 0;
+    while(got < kRead && engine_.telemetry().read(read_[got]))
+        got++;
+    if(got == 0 && ready_ && !told_ && haveLast_) // the transport changed, nothing new: the last frame again, as news
+    {
+        read_[0] = last_;
+        read_[0].seq++;
+        read_[0].block = 0;
+        got = 1;
+    }
+    if(!ready_ || got == 0)
         return;
+    last_     = read_[got - 1];
+    haveLast_ = true;
+    told_     = true;
+    AmmoFrame* const frames = send_;
+    const uint32_t   n      = got < kSend ? got : kSend;
+    for(uint32_t j = 0, from = 0; j < n; j++)
+    {
+        const uint32_t to = (uint32_t)(((uint64_t)(j + 1) * got) / n) - 1; // the frames [from, to] fold into `to`
+        AmmoFrame&     f  = frames[j];
+        f                 = read_[to];
+        for(uint32_t k = from; k < to; k++)
+        {
+            const AmmoFrame& e = read_[k];
+            f.block += e.block;
+            for(int s = 0; s < AMMO_SLOTS; s++)
+            {
+                AmmoChannelFrame&       c = f.ch[s];
+                const AmmoChannelFrame& d = e.ch[s];
+                if(d.duck > c.duck)
+                    c.duck = d.duck;
+            }
+        }
+        // a hit left out: the frame sent has it, with that note (the latest of them, when it has none of its own)
+        for(int s = 0; s < AMMO_SLOTS; s++)
+        {
+            AmmoChannelFrame& c = f.ch[s];
+            for(uint32_t k = to; k-- > from && !c.hit;)
+            {
+                const AmmoChannelFrame& d = read_[k].ch[s];
+                if(d.hit)
+                {
+                    c.hit        = 1;
+                    c.note       = d.note;
+                    c.pitchClass = d.pitchClass;
+                    c.hitSeed    = d.hitSeed;
+                }
+            }
+        }
+        from = to + 1;
+    }
 
     const bool    playing = Playing();
     std::string   js;
@@ -522,6 +577,11 @@ void Bridge::Tick()
             {
                 js += ",dk:";
                 Num(js, c.duck, "%.3f");
+            }
+            if(i + 1 < n) // the waves: the last frame's only
+            {
+                js += "}";
+                continue;
             }
             float peak = 0.f;
             for(int k = 0; k < AMMO_WAVE_LEN; k++)

@@ -9,6 +9,8 @@
  *                  ammo.rec({...}) ammo.toast("text") ammo.info({}) ammo.tick([...], host)
  *
  *  Differences from desktop:
+ *  - Ticks fold the frames of many small blocks (the tablet's 96-frame bursts: 500 a second) into at most six,
+ *    hits and ducking kept, and only the last carries the waves (Bridge.cpp, Tick).
  *  - Parameters go straight to the engine (there is no plugin host to tell); `edit` is accepted and ignored.
  *  - The transport is the bridge's: the clock is always the engine's internal one, which never stops, so
  *    play / stop (Space: key 32) is a state here that the audio callback reads (Playing()): stopped, it
@@ -85,6 +87,9 @@ class Bridge
     int               preset_ = 1;  // First light, the default patch; -1: a patch file
     std::string       file_;        // that file's name, when one is open (or was just saved)
     std::string       pageJson_;    // the page's state for the next save
+    static constexpr uint32_t kRead = 32, kSend = 6; // a tick reads the whole telemetry ring, sends at most six
+    AmmoFrame         read_[kRead], send_[kSend], last_;
+    bool              haveLast_ = false, told_ = true; // told_: the page has seen the transport as it is
     WavWriter         wav_;
     std::string       recPath_;
     double            recRate_ = 48000.0, lastEvalMs_ = 0.0;
