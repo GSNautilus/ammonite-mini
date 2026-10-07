@@ -1,0 +1,244 @@
+"""The bridge (bridge/Bridge.hpp) headless, through its C API in the engine DLL: what the page is sent at
+`ready`, `set` reaching the engine, the shape of a tick, the transport, presets, patch files through the
+platform's picker, recording. Run by mini.ps1 test (AMMO_ENGINE_DLL names the DLL)."""
+import base64
+import ctypes as C
+import json
+import os
+import struct
+import sys
+import tempfile
+
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "engine"))
+from engine_api import DLL, Engine, check, done, pid  # noqa: E402  (exits early if the DLL is not built)
+
+EVAL = C.CFUNCTYPE(None, C.c_void_p, C.c_char_p)
+PICK = C.CFUNCTYPE(None, C.c_void_p, C.c_int, C.c_char_p)
+RECORDED = C.CFUNCTYPE(None, C.c_void_p, C.c_char_p, C.c_int)
+LOG = C.CFUNCTYPE(None, C.c_void_p, C.c_char_p)
+
+
+class Host(C.Structure):
+    _fields_ = [("user", C.c_void_p), ("eval", EVAL), ("pick", PICK), ("recorded", RECORDED), ("log", LOG)]
+
+
+DLL.ammo_bridge_create.restype = C.c_void_p
+DLL.ammo_bridge_create.argtypes = [C.c_void_p, C.POINTER(Host), C.c_char_p]
+DLL.ammo_bridge_destroy.argtypes = [C.c_void_p]
+DLL.ammo_bridge_message.argtypes = [C.c_void_p, C.c_char_p]
+DLL.ammo_bridge_tick.argtypes = [C.c_void_p]
+DLL.ammo_bridge_playing.argtypes = [C.c_void_p]
+DLL.ammo_bridge_patch_text.argtypes = [C.c_void_p, C.c_char_p, C.c_int]
+DLL.ammo_bridge_saved.argtypes = [C.c_void_p, C.c_char_p, C.c_int]
+DLL.ammo_bridge_opened.argtypes = [C.c_void_p, C.c_char_p, C.c_char_p, C.c_int]
+DLL.ammo_preset_count.restype = C.c_int
+
+
+def js_args(js):
+    """ammo.fn(a, b, ...) -> ("fn", [a, b, ...]): the bridge writes object keys bare, as JS allows; quote them
+    (outside strings) and the arguments are JSON."""
+    name, rest = js.split("(", 1)
+    assert name.startswith("ammo.") and rest.endswith(")"), js[:80]
+    body, out, i, n = rest[:-1], [], 0, len(rest) - 1
+    while i < n:
+        c = body[i]
+        if c == '"':  # a string, as is
+            j = i + 1
+            while body[j] != '"':
+                j += 2 if body[j] == "\\" else 1
+            out.append(body[i:j + 1])
+            i = j + 1
+        elif (c.isalpha() or c == "_") and out and out[-1][-1:] in "{,":
+            j = i
+            while j < n and (body[j].isalnum() or body[j] == "_"):
+                j += 1
+            word = body[i:j]
+            out.append('"%s"' % word if j < n and body[j] == ":" else word)
+            i = j
+        else:
+            out.append(c)
+            i += 1
+    return name[5:], json.loads("[" + "".join(out) + "]")
+
+
+class Rig:
+    """An engine, a bridge on it, and everything the bridge asked of the platform."""
+
+    def __init__(self, record_dir=""):
+        self.e = Engine()
+        self.e.set("sync", 1)  # the internal clock, as on the tablet
+        self.calls, self.picks, self.recorded, self.logs = [], [], [], []
+        self.cb = (EVAL(lambda u, js: self.calls.append(js_args(js.decode()))),
+                   PICK(lambda u, save, name: self.picks.append((save, name.decode()))),
+                   RECORDED(lambda u, path, ok: self.recorded.append((path.decode(), ok))),
+                   LOG(lambda u, line: self.logs.append(line.decode())))
+        self.host = Host(None, *self.cb)
+        self.b = DLL.ammo_bridge_create(C.c_void_p(self.e.p), C.byref(self.host), record_dir.encode())
+
+    def say(self, msg):
+        self.calls.clear()
+        DLL.ammo_bridge_message(self.b, msg.encode())
+        return self.calls
+
+    def tick(self):
+        self.calls.clear()
+        DLL.ammo_bridge_tick(self.b)
+        return self.calls
+
+    def last(self, fn):
+        found = [a for f, a in self.calls if f == fn]
+        return found[-1] if found else None
+
+    def close(self):
+        DLL.ammo_bridge_destroy(self.b)
+        self.e.close()
+
+
+# ---- ready: the table, every value, the presets, the info
+r = Rig()
+calls = r.say("ready")
+check([f for f, _ in calls] == ["params", "values", "presets", "info"], "ready -> params, values, presets, info: %s" % [f for f, _ in calls])
+table = calls[0][1][0]
+check(len(table) == DLL.ammo_param_count(), "params: %d entries, as the engine's visible table (%d)" % (len(table), DLL.ammo_param_count()))
+by_s = {(d["s"], d["slot"]): d for d in table}
+gen1 = by_s.get(("gen", 0))
+check(gen1 is not None and gen1["id"] == pid("gen", 0) and gen1["names"][:2] == ["Off", "Arp"] and gen1["steps"] == 5,
+      "params: slot 1's gen is id %s, 5 steps, names Off, Arp, ..." % (gen1 and gen1["id"]))
+check(all(d["steps"] > 0 and len(d["names"]) == d["steps"] for d in table if "names" in d), "params: names only on stepped parameters, one per step")
+values = dict((int(i), v) for i, v in calls[1][1][0])
+check(len(values) == len(table) and all(abs(values[d["id"]] - r.e.get_id(d["id"])) < 1e-5 * max(1, abs(values[d["id"]])) for d in table),
+      "values: one per parameter, the engine's")
+plist, cur, fname = calls[2][1]
+check(len(plist) == DLL.ammo_preset_count() and cur == 1 and fname == "" and plist[1]["n"] == "First light",
+      "presets: %d, current 1 (First light), no file" % len(plist))
+check(calls[3][1][0].get("fmt") == "android", "info: fmt android")
+
+# ---- set: into the engine, clamped; unknown ids and junk ignored
+tempo = pid("tempo")
+r.say("set %d 97.5" % tempo)
+check(abs(r.e.get("tempo") - 97.5) < 1e-4, "set tempo 97.5 -> the engine has %.2f" % r.e.get("tempo"))
+r.say("set %d 9999" % tempo)
+check(abs(r.e.get("tempo") - 240) < 1e-4, "set tempo 9999 -> clamped to %.0f" % r.e.get("tempo"))
+before = r.e.get("tempo")
+r.say("set 99999 1")
+r.say("set nonsense")
+r.say("edit %d 1" % tempo)
+check(r.e.get("tempo") == before and not r.calls, "an unknown id, junk and edit change nothing and say nothing")
+r.say("set %d 2.6" % pid("gen", 3))
+check(r.e.get("gen", 3) == 3, "set a stepped parameter 2.6 -> %g" % r.e.get("gen", 3))
+r.say("set %d 110" % tempo)
+r.say("set %d 0" % pid("gen", 3))
+
+# ---- a tick: the frames since the last, desktop's shape
+r.e.render(0.5)
+calls = r.tick()
+check(len(calls) == 1 and calls[0][0] == "tick", "a tick after 0.5 s: one ammo.tick")
+frames, hostinfo = calls[0][1]
+check(1 <= len(frames) <= 6, "it carries %d frames (at most 6)" % len(frames))
+f = frames[-1]
+keys = ["s", "b", "t", "p", "h", "cr", "cd", "cq", "pp", "pl", "km", "cm", "sr", "bl", "mr", "mp", "gg", "lg", "ch"]
+check(list(f.keys()) == keys, "a frame's fields: %s" % ",".join(f.keys()))
+check(f["p"] == 1 and f["h"] == 0 and f["sr"] == 48000, "playing (the bridge's transport), no host clock, 48000 Hz")
+check(set(f["ch"].keys()) == {"0", "1", "2"}, "First light: channels 0, 1, 2 in it (%s)" % ",".join(sorted(f["ch"])))
+c = f["ch"]["0"]
+ckeys = ["a", "n", "pc", "e", "r", "k", "h", "sd", "st", "ln", "v", "ws", "w"]
+check([k for k in c.keys() if k not in ("m", "dk")] == ckeys, "a channel's fields: %s" % ",".join(c.keys()))
+wave = base64.b64decode(c["w"])
+check(len(wave) == 128 and max(abs(struct.unpack("b", bytes([x]))[0]) for x in wave) in (126, 127), "its wave: 128 signed bytes, normalised to 127")
+check(set(hostinfo.keys()) == {"idleMs", "evalMs"}, "and the host's numbers: idleMs, evalMs")
+while r.tick():  # the rest of the half second (the first tick took six)
+    pass
+check(r.tick() == [], "no new frames: no tick")
+r.e.render(2.0)
+check(len(r.tick()[0][1][0]) == 6, "many frames waiting: 6 in one tick")
+
+# ---- the transport: Space down toggles; its repeats and its release do not
+check(DLL.ammo_bridge_playing(r.b) == 1, "playing at the start")
+r.say("key 1 32 0")
+check(DLL.ammo_bridge_playing(r.b) == 0, "Space: stopped")
+r.say("key 1 32 1")
+r.say("key 0 32 0")
+r.say("key 1 65 0")
+check(DLL.ammo_bridge_playing(r.b) == 0, "a repeat, the release and another key change nothing")
+r.e.render(0.1)
+check(r.tick()[0][1][0][-1]["p"] == 0, "a tick says p:0")
+r.say("key 1 32 0")
+check(DLL.ammo_bridge_playing(r.b) == 1, "Space again: playing")
+
+# ---- presets: every value into the engine and the page
+calls = r.say("preset 7")
+check([fn for fn, _ in calls] == ["values", "presets"], "preset 7 -> values, presets")
+ref = Engine()
+DLL.ammo_apply_preset(C.c_void_p(ref.p), 7)
+ids = [d["id"] for d in table]
+check(all(abs(r.e.get_id(i) - ref.get_id(i)) < 1e-5 for i in ids), "the engine now has preset 7's values (as ammo_apply_preset)")
+sent = dict((int(i), v) for i, v in calls[0][1][0])
+check(all(abs(sent[i] - ref.get_id(i)) < 1e-5 * max(1, abs(sent[i])) for i in ids), "and the page was sent them")
+check(calls[1][1][1] == 7 and calls[1][1][2] == "", "presets: current 7")
+ref.close()
+check(r.say("preset 999") == [] and r.say("preset -1") == [], "a preset out of range: nothing")
+
+# ---- save: the platform's picker, the text, the name
+calls = r.say('save {"v":1,"looks":{"0":"glow"}}')
+check(r.picks[-1] == (1, "Night groove.ammo") and not calls, "save -> a Save picker suggesting 'Night groove.ammo'")
+n = DLL.ammo_bridge_patch_text(r.b, None, 0)
+buf = C.create_string_buffer(n + 1)
+DLL.ammo_bridge_patch_text(r.b, buf, n + 1)
+text = buf.value.decode()
+check(len(text) == n and text.rstrip("\n").splitlines()[-1] == 'page {"v":1,"looks":{"0":"glow"}}', "the patch text ends with the page line")
+r.calls.clear()
+DLL.ammo_bridge_saved(r.b, b"Groove mine.ammo", 1)
+check(r.last("presets")[1:] == [7, "Groove mine"] and r.last("toast") == ["Saved Groove mine.ammo"], "saved -> presets name the file, a toast")
+r.calls.clear()
+DLL.ammo_bridge_saved(r.b, b"", 0)
+check(r.calls == [], "a cancelled picker: nothing")
+DLL.ammo_bridge_saved(r.b, b"x.ammo", 0)
+check(r.last("toast") == ["Could not write x.ammo"], "a failed write: a toast")
+
+# ---- open: the values, the page line, the name
+r.say("preset 1")
+calls = r.say("open")
+check(r.picks[-1] == (0, ""), "open -> an Open picker")
+r.calls.clear()
+DLL.ammo_bridge_opened(r.b, b"Groove mine.ammo", text.encode(), len(text.encode()))
+fns = [fn for fn, _ in r.calls]
+check(fns == ["values", "page", "presets", "toast"], "opened -> values, page, presets, toast: %s" % fns)
+check(r.last("page") == ['{"v":1,"looks":{"0":"glow"}}'], "ammo.page gets the page line as it was saved")
+check(r.last("presets")[1:] == [-1, "Groove mine"], "presets: -1 (a file), its name")
+ref = Engine()
+DLL.ammo_apply_preset(C.c_void_p(ref.p), 7)
+check(all(abs(r.e.get_id(i) - ref.get_id(i)) < 1e-4 for i in ids), "the engine is back at the saved patch (preset 7's values)")
+ref.close()
+r.calls.clear()
+DLL.ammo_bridge_opened(r.b, b"notes.txt", b"hello", 5)
+check(r.last("toast") == ["Not an Ammonite patch: notes.txt"] and r.last("values") is None, "a file that is not a patch: a toast, nothing applied")
+
+# ---- recording: into the platform's folder, drained by ticks, the platform told
+with tempfile.TemporaryDirectory() as tmp:
+    rr = Rig(tmp)
+    rr.say("ready")
+    calls = rr.say("record 1")
+    check(rr.last("rec") == [{"on": 1}], "record 1 -> ammo.rec({on:1})")
+    for _ in range(10):
+        rr.e.render(0.1)
+        rr.tick()
+    calls = rr.say("record 0")
+    rec = rr.last("rec")[0]
+    path = rec.get("path", "")
+    check(rec["on"] == 0 and rec["ok"] == 1 and abs(rec["secs"] - 1.0) < 0.05 and rec["dropped"] == 0,
+          "record 0 -> on 0, ok, %.2f s, %d dropped" % (rec["secs"], rec["dropped"]))
+    check(os.path.dirname(path) == tmp and os.path.basename(path).startswith("Ammonite ") and path.endswith(" First light.wav"),
+          "named 'Ammonite <date> <time> First light.wav' in the folder given: %s" % os.path.basename(path))
+    check(rr.recorded == [(path, 1)], "the platform is told of it")
+    size = os.path.getsize(path) if os.path.exists(path) else 0
+    check(abs(size - (44 + 8 * 48000)) < 8 * 48000 * 0.05 + 100, "the WAV: %d bytes, about a second of 32-bit stereo" % size)
+    rr.close()
+    bad = Rig(os.path.join(tmp, "missing", "folder"))
+    bad.say("ready")
+    bad.say("record 1")
+    check(bad.last("rec") == [{"on": 0}] and (bad.last("toast") or [""])[0].startswith("Could not record to "),
+          "a folder that cannot be written: rec off, a toast")
+    bad.close()
+
+r.close()
+done()

@@ -115,13 +115,15 @@ switch ($Action) {
         Invoke-MsvcBuild
         $env:AMMO_ENGINE_DLL = $dll # the tests look for it under desktop's layout otherwise
         $failed = @()
-        foreach ($t in Get-ChildItem (Join-Path $root 'tests\engine') -Filter 'test_*.py') {
-            Write-Host "==> engine\$($t.Name)" -ForegroundColor Cyan
-            & $py $t.FullName
-            if ($LASTEXITCODE -ne 0) { $failed += "engine\$($t.Name)" }
+        foreach ($dir in 'engine', 'bridge') {
+            foreach ($t in Get-ChildItem (Join-Path $root "tests\$dir") -Filter 'test_*.py') {
+                Write-Host "==> $dir\$($t.Name)" -ForegroundColor Cyan
+                & $py $t.FullName
+                if ($LASTEXITCODE -ne 0) { $failed += "$dir\$($t.Name)" }
+            }
         }
         if ($failed) { throw "failed: $($failed -join ', ')" }
-        Write-Host 'All engine tests passed.' -ForegroundColor Green
+        Write-Host 'All engine and bridge tests passed.' -ForegroundColor Green
     }
     'pair'    { if (-not $Device -or -not $Code) { throw 'pair -Device <address:port> -Code <six digits>' }; Invoke-Adb pair $Device $Code }
     'connect' { if (-not $Device) { throw 'connect -Device <address:port>' }; Invoke-Adb connect $Device; Invoke-Adb devices -l }
