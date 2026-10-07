@@ -14,7 +14,8 @@ import android.widget.TextView
 
 /** Phase 1: no page yet. The default preset plays on launch; Bench renders offline and reports the times.
  *  From adb: am start -n com.ammonite.mini/.MainActivity --ez bench true (bench at launch; results in logcat,
- *  tag AmmoMini), --ez play false (do not start playing). */
+ *  tag AmmoMini), --ez play false (do not start playing), --ei patch 1|2 (play the bench's heavy patches),
+ *  --ez hint false (no performance hint). */
 class MainActivity : Activity() {
     private val ui = Handler(Looper.getMainLooper())
     private lateinit var status: TextView
@@ -43,6 +44,8 @@ class MainActivity : Activity() {
             addView(status)
             addView(bench)
         })
+        Native.setPatch(intent.getIntExtra("patch", 0))
+        Native.setHint(intent.getBooleanExtra("hint", true))
         if (intent.getBooleanExtra("bench", false)) runBench()
         else if (intent.getBooleanExtra("play", true)) status.text = Native.start()
         ui.post(object : Runnable {

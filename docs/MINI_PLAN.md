@@ -40,6 +40,47 @@ engine and the page this started from.
   11 `tests/engine` files pass against `build/cmake/bin/ammonite_engine.dll`,
   unchanged (`mini.ps1` points them at it with `AMMO_ENGINE_DLL`). `serve`
   uses port 8010. Next: the user installs the Android tools (step 2).
+- 2026-10-07, **phase 1 done: sound on the tablet, and the bench.**
+  - Tools: Android Studio (JDK 25), SDK 35, NDK 30, CMake 4.1.2; Gradle 9.8.1
+    (wrapper), AGP 9.4.1, Oboe 1.11.0 (prefab). The tablet: Android 16 (API
+    36), paired over Wireless debugging (`mini.ps1 pair | connect`).
+  - Engine change: `ScopedFlushToZero` on ARM64 (README).
+  - The stream: AAudio, 48 kHz, exclusive, low latency (MMAP), bursts of 96
+    frames (2 ms), a 192-frame buffer (4 ms); the callback on cpu 6-7 (the
+    A78s, 2.4 GHz).
+  - **10 minutes of the default patch (First light): 0 xruns**, callback load
+    6.5 % mean, 15.7 % worst (633 s).
+  - Bench, offline, 10 s at 48 kHz in 192-frame blocks on a big core (after a
+    5 s settle: just after a launch there are spikes that are not ours):
+
+    | patch | per 10 s | real time | worst block |
+    |---|---|---|---|
+    | default (First light, 3 ch) | 0.20 s | 2.0 % | 4 % |
+    | 16 ch, every effect (drive, chorus, delay, reverb, duck) | 1.61 s | 16.1 % | 20 % |
+    | 16 chord channels (9ths in steps: 80 voices sounding) | 2.91 s | 29.1 % | 41 % |
+
+    96-frame blocks cost the same (16.5 %, 29.4 %): no per-block overhead to
+    speak of.
+  - Live, the same heavy patches for 2 min each: 0 xruns, but the callback's
+    load reads 42 % (every effect) and 64-66 % (chords), worst 79 %. Not the
+    engine: the governor runs the big cores at 1.0-1.7 GHz while there is
+    room, so the load is of a slowed core. The performance hint (Oboe ->
+    ADPF) is not supported on this tablet (`PowerHintSessions are not
+    supported`); it is enabled anyway, and changes nothing (A/B, 90 s each).
+  - **Decided by these:** no channel cap (16 stay); the CPU fixes in
+    section 6 wait. If dropouts come with the page running (phase 2), first
+    a larger buffer (2 -> 4 bursts, 8 ms), then the fixes.
+  - The bridge (phase 2, step 1) was done alongside: see the next entry.
+- 2026-10-07, **phase 2, step 1: the bridge.** `bridge/` (Bridge.hpp/.cpp,
+  bridge_api.h): desktop's `AmmoniteUI.cpp` message handling and ticks with
+  no platform code, in the Windows DLL. `tests/bridge/test_bridge.py`
+  (ready, set, the tick's shape, the transport, presets, save / open through
+  the platform's picker, recording) passes with the engine tests. Changes
+  from desktop: parameters straight to the engine; the transport (Space,
+  the play button) is the bridge's, since the internal clock never stops:
+  stopped, the audio outputs silence and the music waits where it was;
+  patch files through the platform (`PatchText`, `Saved`, `Opened`).
+  Next: step 2, the WebView with the page and JNI to the bridge.
 
 ## 1. What it is
 
@@ -245,8 +286,11 @@ heard without a felt delay, and presets switch cleanly.
 - ~~Fine-adjust gesture~~ (phase 0): a second finger held.
 - **CPU fixes** listed in `PHASE4_BREADTH.md`: skip muted channels' voices,
   and stop running all six chord voices when idle. Make them here, or in
-  `ammonite` and carry them across? Only if phase 1's bench needs them.
-- **Channel cap** (phase 1 bench).
+  `ammonite` and carry them across? Phase 1's bench does not need them
+  (section 0); only if the app glitches with the page running.
+- ~~Channel cap~~ (phase 1 bench): none, 16 channels.
+- **Play / stop** (phase 2): the bridge's transport stops dead (silence, the
+  music waits). A fade, or stop going back to the bar's start, if wanted.
 - **MIDI in or out** (USB / BLE, `android.media.midi`) and **Ableton Link**:
   later, if at all.
 - **Whether the S Pen's hover shows the tooltips** dropped for fingers.

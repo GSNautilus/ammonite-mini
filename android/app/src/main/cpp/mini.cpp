@@ -110,6 +110,8 @@ std::string pinToBigCores()
 class Player : public oboe::AudioStreamDataCallback, public oboe::AudioStreamErrorCallback
 {
 public:
+    bool hint = true; // Android's performance hint (ADPF, through Oboe): the callback's times keep the clocks up
+    int patch = 0; // what start() plays: 0 the default, 1 sixteen channels with every effect, 2 sixteen chord channels
     std::string start()
     {
         std::lock_guard<std::mutex> lk(mu_);
@@ -125,8 +127,9 @@ public:
             ->setErrorCallback(this);
         oboe::Result r = b.openStream(stream_);
         if(r != oboe::Result::OK) { stream_.reset(); return std::string("open failed: ") + oboe::convertToText(r); }
+        stream_->setPerformanceHintEnabled(hint);
         rate_ = stream_->getSampleRate();
-        if(!engine_) { engine_ = ammo_create(rate_, kMaxBlock); patchDefault(engine_); }
+        if(!engine_) { engine_ = ammo_create(rate_, kMaxBlock); (patch == 1 ? patchFull : patch == 2 ? patchChords : patchDefault)(engine_); }
         L_.assign(kMaxBlock, 0.f); R_.assign(kMaxBlock, 0.f);
         pinned_ = false; resetStats();
         t0_ = Clock::now();
@@ -189,11 +192,12 @@ private:
     {
         if(!stream_) return "stopped";
         char buf[256];
-        std::snprintf(buf, sizeof buf, "%s %d Hz, burst %d, buffer %d frames (%.1f ms), %s, %s",
+        std::snprintf(buf, sizeof buf, "%s %d Hz, burst %d, buffer %d frames (%.1f ms), %s, %s, hint %s",
                       stream_->getAudioApi() == oboe::AudioApi::AAudio ? "AAudio" : "OpenSL ES", stream_->getSampleRate(),
                       stream_->getFramesPerBurst(), stream_->getBufferSizeInFrames(), 1000.0 * stream_->getBufferSizeInFrames() / stream_->getSampleRate(),
                       stream_->getSharingMode() == oboe::SharingMode::Exclusive ? "exclusive" : "shared",
-                      stream_->getPerformanceMode() == oboe::PerformanceMode::LowLatency ? "low latency" : "not low latency");
+                      stream_->getPerformanceMode() == oboe::PerformanceMode::LowLatency ? "low latency" : "not low latency",
+                      hint ? "on" : "off");
         return buf;
     }
     void resetStats() { calls_ = 0; meanShown_ = 0; worstShown_ = 0; worstEver_ = 0; winSum_ = 0; winN_ = 0; winWorst_ = 0; winFrames_ = 0; }
@@ -214,9 +218,9 @@ private:
 Player gPlayer;
 
 /* ---------------------------------------------------------------- the bench */
-std::string benchOne(const char* name, void (*patch)(void*))
+std::string benchOne(const char* name, void (*patch)(void*), int block = 192)
 {
-    const double sr = 48000; const int block = 192, seconds = 10;
+    const double sr = 48000; const int seconds = 10;
     void* e = ammo_create(sr, kMaxBlock);
     patch(e);
     std::vector<float> L(block), R(block);
@@ -251,6 +255,8 @@ std::string benchOne(const char* name, void (*patch)(void*))
 
 extern "C" {
 JNIEXPORT jstring JNICALL Java_com_ammonite_mini_Native_start(JNIEnv* env, jclass) { return env->NewStringUTF(gPlayer.start().c_str()); }
+JNIEXPORT void JNICALL Java_com_ammonite_mini_Native_setPatch(JNIEnv*, jclass, jint k) { gPlayer.patch = k; }
+JNIEXPORT void JNICALL Java_com_ammonite_mini_Native_setHint(JNIEnv*, jclass, jboolean on) { gPlayer.hint = on; }
 JNIEXPORT void JNICALL Java_com_ammonite_mini_Native_stop(JNIEnv*, jclass) { gPlayer.stop(); }
 JNIEXPORT jstring JNICALL Java_com_ammonite_mini_Native_status(JNIEnv* env, jclass) { return env->NewStringUTF(gPlayer.status().c_str()); }
 JNIEXPORT jstring JNICALL Java_com_ammonite_mini_Native_bench(JNIEnv* env, jclass)
@@ -261,7 +267,10 @@ JNIEXPORT jstring JNICALL Java_com_ammonite_mini_Native_bench(JNIEnv* env, jclas
     out += benchOne("default (First light)", patchDefault) + "\n";
     out += benchOne("16 ch, every effect", patchFull) + "\n";
     out += benchOne("16 chord channels", patchChords) + "\n";
-    out += benchOne("default, again", patchDefault);
+    out += benchOne("default, again", patchDefault) + "\n";
+    // the live callback's size (a burst, 96 frames): what a block costs beyond its samples
+    out += benchOne("16 ch, every effect", patchFull, 96) + "\n";
+    out += benchOne("16 chord channels", patchChords, 96);
     return env->NewStringUTF(out.c_str());
 }
 }
