@@ -4,7 +4,11 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <xmmintrin.h>
+#if defined(__aarch64__)
+# include <cstdint>
+#else
+# include <xmmintrin.h>
+#endif
 
 namespace ammo {
 
@@ -12,12 +16,27 @@ namespace
 {
 std::atomic<int> gInstances{0};
 
+#if defined(__aarch64__)
+// Mini (Android, ARM64): denormals flushed by FPCR.FZ (bit 24), as FTZ/DAZ do on x86
+struct ScopedFlushToZero
+{
+    uint64_t saved;
+    ScopedFlushToZero()
+    {
+        __asm__ __volatile__("mrs %0, fpcr" : "=r"(saved));
+        const uint64_t fz = saved | (1ull << 24);
+        __asm__ __volatile__("msr fpcr, %0" : : "r"(fz));
+    }
+    ~ScopedFlushToZero() { __asm__ __volatile__("msr fpcr, %0" : : "r"(saved)); }
+};
+#else
 struct ScopedFlushToZero
 {
     unsigned int saved;
     ScopedFlushToZero() : saved(_mm_getcsr()) { _mm_setcsr(saved | 0x8040); }
     ~ScopedFlushToZero() { _mm_setcsr(saved); }
 };
+#endif
 
 inline int   I(float v) { return (int)std::lround(v); }
 constexpr float kBusGain = 2.f;
