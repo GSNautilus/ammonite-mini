@@ -26,10 +26,10 @@ Changes to `engine/` since the snapshot:
 
 ## Status
 
-The page works by touch in Chrome on the tablet (phase 0). The engine builds
-on Windows and passes the desktop's engine tests, and a minimal Android app
-plays the default preset through Oboe and benches the engine (phase 1). The
-page is not in the app yet. The build plan and its status: `docs/MINI_PLAN.md`.
+The app plays on the tablet: the page full screen in a WebView, driving the
+engine through the bridge (`bridge/`), sound through Oboe (phases 0-2).
+Patch files and recordings are wired but not finished (phase 3). The build
+plan and its status: `docs/MINI_PLAN.md`.
 
 ## Building and testing (Windows)
 
