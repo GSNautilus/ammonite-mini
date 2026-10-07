@@ -35,6 +35,11 @@ engine and the page this started from.
   - Checked by synthetic pointer events in headless Edge (not in the
     repo). Served on port 8010 while desktop's page server holds 8000.
   - Next: phase 1.
+- 2026-10-07, **phase 1, step 1: the engine on Windows.** `CMakeLists.txt`
+  (the engine DLL, as desktop's) and `mini.ps1 build | test | serve`. All
+  11 `tests/engine` files pass against `build/cmake/bin/ammonite_engine.dll`,
+  unchanged (`mini.ps1` points them at it with `AMMO_ENGINE_DLL`). `serve`
+  uses port 8010. Next: the user installs the Android tools (step 2).
 
 ## 1. What it is
 

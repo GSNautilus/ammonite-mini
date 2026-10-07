@@ -20,15 +20,28 @@ are carried across by hand when they matter; note each one here.
 
 ## Status
 
-Snapshot only: nothing builds yet. The build plan is `docs/MINI_PLAN.md`.
+The page works by touch in Chrome on the tablet (phase 0); the engine builds
+on Windows and passes the desktop's engine tests (phase 1, step 1). No
+Android app yet. The build plan and its status: `docs/MINI_PLAN.md`.
+
+## Building and testing (Windows)
+
+Visual Studio Build Tools 2022 (MSVC, CMake, Ninja), as for desktop:
+
+```powershell
+.\mini.ps1 build   # build\cmakeinmmonite_engine.dll
+.\mini.ps1 test    # build, then tests\engine	est_*.py against it
+```
+
+Python is the `codex` conda env's (or `$env:AMMONITE_PYTHON`).
 
 ## Trying the page on the tablet
 
 With the PC and the tablet on the same network:
 
 ```powershell
-conda activate codex; python -m http.server 8000 --directory web --bind 0.0.0.0
+.\mini.ps1 serve
 ```
 
-then open `http://<the PC's IP>:8000/dev.html` in Chrome on the tablet
-(the page with a stand-in engine, no sound).
+then open the address it prints, `http://<the PC's IP>:8010/dev.html`, in
+Chrome on the tablet (the page with a stand-in engine, no sound).
