@@ -34,4 +34,6 @@ object Native {
     @JvmStatic external fun setPatch(k: Int)
     /** Android's performance hint on the audio callback (on unless told otherwise; before the first start). */
     @JvmStatic external fun setHint(on: Boolean)
+    /** Ask for an exclusive stream (AAudio's MMAP path), or a shared one through the mixer (before the first start). */
+    @JvmStatic external fun setExclusive(on: Boolean)
 }

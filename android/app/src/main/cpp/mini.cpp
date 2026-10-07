@@ -1,7 +1,7 @@
 /* Ammonite Mini's native side: the engine playing through Oboe, the bridge to the page, and a bench
    (docs/MINI_PLAN.md sections 3 and 4).
 
-   Play: an Oboe stream (AAudio, low latency, exclusive if granted, float stereo at the device's rate) whose
+   Play: an Oboe stream (AAudio, low latency, shared (the exclusive MMAP path is silent on this tablet), float stereo at the device's rate) whose
    callback runs ammo_process with no host clock and Sync on Internal, so the engine's own clock runs. The
    callback thread is pinned to the fastest cores. Each callback is timed against the audio it makes: its load
    (0..1 of the time it had), kept as the mean and the worst over the last second and the worst since start, with
@@ -118,6 +118,7 @@ std::string pinToBigCores()
 class Player : public oboe::AudioStreamDataCallback, public oboe::AudioStreamErrorCallback
 {
 public:
+    bool exclusive = false; // true: AAudio's MMAP path to the hardware (silent on the SM-P620); false: shared, through the mixer
     bool hint = true; // Android's performance hint (ADPF, through Oboe): the callback's times keep the clocks up
     int patch = 0; // what start() plays: 0 the default, 1 sixteen channels with every effect, 2 sixteen chord channels
     /** The engine to play, and the bridge whose transport says whether it plays (before start). */
@@ -129,7 +130,7 @@ public:
         oboe::AudioStreamBuilder b;
         b.setDirection(oboe::Direction::Output)
             ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
-            ->setSharingMode(oboe::SharingMode::Exclusive)
+            ->setSharingMode(exclusive ? oboe::SharingMode::Exclusive : oboe::SharingMode::Shared)
             ->setFormat(oboe::AudioFormat::Float)
             ->setChannelCount(2)
             ->setUsage(oboe::Usage::Media)
@@ -386,6 +387,7 @@ JNIEXPORT void JNICALL Java_com_ammonite_mini_Native_opened(JNIEnv* env, jclass,
 JNIEXPORT jstring JNICALL Java_com_ammonite_mini_Native_start(JNIEnv* env, jclass) { return env->NewStringUTF(gPlayer.start().c_str()); }
 JNIEXPORT void JNICALL Java_com_ammonite_mini_Native_setPatch(JNIEnv*, jclass, jint k) { gPlayer.patch = k; }
 JNIEXPORT void JNICALL Java_com_ammonite_mini_Native_setHint(JNIEnv*, jclass, jboolean on) { gPlayer.hint = on; }
+JNIEXPORT void JNICALL Java_com_ammonite_mini_Native_setExclusive(JNIEnv*, jclass, jboolean on) { gPlayer.exclusive = on; }
 JNIEXPORT void JNICALL Java_com_ammonite_mini_Native_stop(JNIEnv*, jclass) { gPlayer.stop(); }
 JNIEXPORT jstring JNICALL Java_com_ammonite_mini_Native_status(JNIEnv* env, jclass) { return env->NewStringUTF(gPlayer.status().c_str()); }
 JNIEXPORT jstring JNICALL Java_com_ammonite_mini_Native_bench(JNIEnv* env, jclass)

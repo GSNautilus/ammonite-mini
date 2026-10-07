@@ -45,11 +45,16 @@ engine and the page this started from.
     (wrapper), AGP 9.4.1, Oboe 1.11.0 (prefab). The tablet: Android 16 (API
     36), paired over Wireless debugging (`mini.ps1 pair | connect`).
   - Engine change: `ScopedFlushToZero` on ARM64 (README).
-  - The stream: AAudio, 48 kHz, exclusive, low latency (MMAP), bursts of 96
-    frames (2 ms), a 192-frame buffer (4 ms); the callback on cpu 6-7 (the
-    A78s, 2.4 GHz).
-  - **10 minutes of the default patch (First light): 0 xruns**, callback load
-    6.5 % mean, 15.7 % worst (633 s).
+  - The stream: AAudio, 48 kHz, low latency, bursts of 96 frames (2 ms), a
+    192-frame buffer (4 ms); the callback on cpu 6-7 (the A78s, 2.4 GHz).
+  - **Correction (phase 2, same day): the exclusive (MMAP) stream these runs
+    used plays silence on this tablet**, though it runs (callbacks, no
+    xruns). Nobody had listened until phase 2. The app now opens a shared
+    stream (through the mixer, same burst and buffer), which is heard; the
+    live numbers below are the exclusive ones, re-measured in shared mode in
+    the phase 2 entry. The offline bench is unaffected.
+  - 10 minutes of the default patch (First light), exclusive: 0 xruns,
+    callback load 6.5 % mean, 15.7 % worst (633 s).
   - Bench, offline, 10 s at 48 kHz in 192-frame blocks on a big core (after a
     5 s settle: just after a launch there are spikes that are not ours):
 
@@ -81,6 +86,33 @@ engine and the page this started from.
   stopped, the audio outputs silence and the music waits where it was;
   patch files through the platform (`PatchText`, `Saved`, `Opened`).
   Next: step 2, the WebView with the page and JNI to the bridge.
+- 2026-10-07, **phase 2, step 2: the page in the app.** The app is a
+  full-screen WebView with the page from the APK's assets (Gradle reads
+  `web/`; `WebViewAssetLoader`), or from the PC with `mini.ps1 run -Dev`.
+  Page -> native through a `WebMessageListener` (`ammoHost`, androidx.webkit
+  1.17.1); native -> page by `evaluateJavascript`; ticks once per display
+  frame (Choreographer). The bridge now folds the tablet's 500 blocks a
+  second into at most six frames a tick (hits, ducking and timing kept,
+  waves in the last), and tells the page of a play / stop even when no frame
+  comes. Save / Open go through Android's pickers; recordings to the app's
+  Music folder (phase 3 finishes both).
+  - **The exclusive stream was silent** (above): the app now asks for a
+    shared one (`--ez exclusive true` to try exclusive again). Heard by the
+    user.
+  - The user, on the tablet: knobs and presets work.
+  - Shared stream, the page running, a channel open (2 min / 1 min):
+
+    | patch | load mean | worst | xruns |
+    |---|---|---|---|
+    | default (First light) | 4.4 % | 18.6 % | 0 |
+    | 16 ch, every effect | 22.5 % | 45.9 % | 0 |
+    | 16 chord channels | 40.7 % | 68.7 % | 0 |
+
+    Lower than the exclusive runs: the page keeps the big cores clocked
+    higher. Still no channel cap.
+  - Device checks are kept short now (a minute or two per patch).
+  - Next: the user's ear on a knob turn's delay and on preset switching
+    (phase 2's "done when"); then phase 3.
 
 ## 1. What it is
 
