@@ -10,6 +10,31 @@ engine and the page this started from.
 - 2026-10-07, **the repo.** A snapshot of `engine/`, `web/` and
   `tests/engine/` from `ammonite` `efc533a`, unchanged, and this plan.
   Nothing builds yet. Next: phase 0.
+- 2026-10-07, **phase 0 done: the page, for touch, without the stage.**
+  Tried by the user on the tablet in Chrome (finger and S Pen); layout
+  approved.
+  - Out: `shells.js`, the stage canvas and frame code, the camera and its
+    gestures, the motion layer, the Visual tab, the eye toggle, the
+    channel's VISUAL group, the stage FX, the rail and the dock button.
+    The patch's page line (`ammo.page`) is kept whole as it came and
+    written back on a save, so desktop's stage settings make the round
+    trip. The engine's stage parameters (`show`) are untouched.
+  - Layout: the desktop's accordion (Conductor / Channels tabs), filling
+    the screen, designed 900 high: 0.89 on the tablet. A two-column
+    prototype (list + card) was tried and not taken.
+  - Touch: every target at least 54 layout px (48 CSS px); no page zoom,
+    selection or pull-to-refresh; a 4 px dead zone before a drag; a
+    double-tap resets; a second finger held anywhere makes a drag fine
+    (1/4), and moves, ends or clicks nothing itself. Hover looks only with
+    a mouse. Shift, the wheel and the keyboard shortcuts stay.
+  - Sync is hidden (internal clock only). Channel names at 20 px, as
+    desktop's uncommitted change.
+  - The fake engine no longer fakes stage values; its URL options are
+    `preset tab open secs grps single`. Page state is kept under
+    `ammo.mini.ui`, apart from desktop's.
+  - Checked by synthetic pointer events in headless Edge (not in the
+    repo). Served on port 8010 while desktop's page server holds 8000.
+  - Next: phase 1.
 
 ## 1. What it is
 
@@ -211,9 +236,8 @@ heard without a felt delay, and presets switch cleanly.
 
 ## 6. Open (settle when the phase needs it)
 
-- **Layout shape** (phase 0): two columns, or the desktop's accordion made
-  bigger.
-- **Fine-adjust gesture** (phase 0).
+- ~~Layout shape~~ (phase 0): the desktop's accordion made bigger.
+- ~~Fine-adjust gesture~~ (phase 0): a second finger held.
 - **CPU fixes** listed in `PHASE4_BREADTH.md`: skip muted channels' voices,
   and stop running all six chord voices when idle. Make them here, or in
   `ammonite` and carry them across? Only if phase 1's bench needs them.

@@ -1,17 +1,21 @@
-/* Ammonite Desktop: the page. Binds the engine's parameter table and
-   telemetry (pushed by AmmoniteUI.cpp) to the stage and one panel of glass
-   docked on the left or the right; the stage centres in the room left over.
+/* Ammonite Mini: the page. Binds the engine's parameter table and telemetry
+   (pushed by the host: AmmoniteUI.cpp on desktop, the bridge on Android) to
+   one panel of glass filling the screen. Ammonite Desktop's panel without its
+   stage, made for a tablet's touch.
 
-   The panel has three tabs: Conductor (key, chords, time, macros), Channels
-   (an accordion: every channel a row with its wave, level, pan, eye and
-   mute; one opens at a time to show what it contains, Generator,
-   Instrument and Visual, one section at a time), Visual (the stage as a
-   whole, its camera, and each channel's look). It collapses to a rail.
-   The stage itself takes a drag (orbit), the wheel (zoom) and a
-   double-click (reset): see the camera.
+   The panel has two tabs: Conductor (key, chords, time, macros, space,
+   master) and Channels (an accordion: every channel a row with its wave,
+   level, pan and mute; one opens at a time to show what it contains,
+   Generator, Instrument and Effects, one section at a time). The clock is
+   always the internal one: there is no host to sync to, so no Sync.
 
-   The layout is designed 1440 high and scaled to the window's height (or
-   its width, below 2000 wide); its width follows the window.
+   The layout is designed LAYOUT_H (900) high and scaled to the window's
+   height (or its width, below MIN_W wide); its width follows the window. On
+   the tablet (1333x800 CSS px) that is 0.89.
+
+   Touch: knobs drag up and down, faders sideways; a second finger held
+   anywhere makes a drag fine (as Shift does); a double-tap resets. See the
+   events.
 
    The DOM is built on structural changes only (tab, selection, slots on /
    off, sections, presets); values, chip states and texts refresh in place,
@@ -22,13 +26,15 @@
                  ammo.presets(list, current, file) ammo.page(json) ammo.rec(o) ammo.toast(text)
                  ammo.info(o) ammo.tick(frames, host)
    Page -> host: ready | set <id> <v> | edit <id> <0|1> | preset <k> | save <json> | open | record <0|1> |
-                 key <down> <vk> <repeat> | gl ok ... | gl fail ... | log ...
-   A patch file carries the page's own state with the engine's (pageState(), ammo.page). Ctrl+S, Ctrl+O and R
+                 key <down> <vk> <repeat> | log ...
+   A patch file carries the page's own state with the engine's (pageState(), ammo.page: desktop's stage settings,
+   kept as they came). Ctrl+S, Ctrl+O and R
    are the page's keys (save, open, record); every other key goes to the host.
    In a plain browser, dev.html loads fake-engine.js to stand in for the host. */
 (function () {
   'use strict';
-  var LAYOUT_H = 1440, MIN_W = 2000, PANEL_W = 1336, RAIL_W = 64, M = 12;
+  /* the layout: 900 high (0.89 on the tablet's 1333x800), as wide as the window; below 1500 wide, scaled to the width */
+  var LAYOUT_H = 900, MIN_W = 1500;
   var bridge = window.chrome && window.chrome.webview;
   function send(m) { if (bridge) bridge.postMessage(m); }
 
@@ -65,20 +71,14 @@
     fx_drive: ['drive', 'pct'], fx_tone: ['bipenv', 'bip'], cho_rate: ['lfo', 'chz'], cho_depth: ['detune', 'pct'], cho_mix: ['level', 'pct'],
     dly_fb: ['env', 'pct'], dly_damp: ['level', 'dhz'], dly_mix: ['level', 'pct'], rev_send: ['level', 'pct'], duck_amt: ['env', 'pct'],
     rev_size: ['len', 'pct'], rev_decay: ['env', 'sec'], rev_damp: ['level', 'rhz'], rev_pre: ['attack', 'ms'], rev_width: ['density', 'pct'], rev_return: ['level', 'pct'], glue: ['drive', 'pct'], ceiling: ['level', 'db'],
-    drum_tune: ['detune', 'sint'], drum_decay: ['env', 'pct'], drum_tone: ['filter', 'pct'], drum_snap: ['attack', 'pct'],
-    v_flow: ['attack', 'pct'], v_pulse: ['env', 'pct'], v_motion: ['lfo', 'pct'],
-    v_presence: ['level', 'pct'], v_response: ['attack', 'pct'], v_cpulse: ['env', 'pct'], v_detail: ['wave', 'pct'],
-    v_size: ['size', 'times'], v_alpha: ['level', 'pct'], v_tilt: ['tilt', 'angle'], v_zoom: ['size', 'times'], v_persp: ['persp', 'pct'], v_orbit: ['lfo', 'pct']
+    drum_tune: ['detune', 'sint'], drum_decay: ['env', 'pct'], drum_tone: ['filter', 'pct'], drum_snap: ['attack', 'pct']
   };
   function specOf(id) {
     var d = ORDER[id]; if (!d) return null;
     var kk = KINDS[d.s] || ['level', 'pct'];
     if (d.s === 'cho_rate' && vibrato(d.slot)) kk = ['lfo', 'vhz']; // Vibrato's rate keeps the wide curve
-    return { id: id, kind: kk[0], fmt: kk[1], min: d.min, max: d.max, steps: d.steps, def: d.def, label: d.n, log: !!LOGP[d.s] };
+    return { id: id, kind: kk[0], fmt: kk[1], min: d.min, max: d.max, steps: d.steps, def: d.def, label: d.n };
   }
-  /* knobs that turn by ratios, not steps (Zoom 0.5x .. 16x: 1x a fifth of the way round, each turn of the wheel the
-     same percentage anywhere) */
-  var LOGP = { v_zoom: 1 };
 
   /* ---------------------------------------------------------- telemetry */
   var F = { seq: 0, beat: 0, bpm: 0, playing: 0, host: 0, cr: 9, cd: 0, cq: 1, pp: -1, pl: 0, km: 0, cm: 0, sr: 0, bl: 0, mr: 0, mp: 0, gg: 0, lg: 0, idleMs: 0, evalMs: 0 };
@@ -89,98 +89,6 @@
   for (var s0 = 0; s0 < SLOTS; s0++) CH[s0] = { hue: null, sat: 92, amp: 0, note: 57, pc: 9, bytes: new Uint8Array(128), wave: new Float32Array(128), active: 0, muted: 0, hit: 0, hitSeed: 0, step: 0, len: 0, rms: 0, peak: 0, glow: 0,
                                                  notes: [], vnotes: [], dkAcc: 0, dkHist: new Float32Array(240), dkPos: 0 };
 
-  /* The stage's own controls: parameters of the page, not the engine. They live in the same table (ids from
-     VBASE up, past the engine's 2112) so knobs, chips, drags and resets work on them unchanged, but they never
-     go to the host: they are kept with the rest of the page's state in localStorage. New ones go at the end of
-     their list (an id is its place in it). The camera's are here too (see the camera, below the motion layer);
-     Yaw and Lie have no knob. */
-  var VBASE = 4096, VSLOT = VBASE + 16, VSTRIDE = 8;
-  var VGLOBAL = [['Flow', 'v_flow', 0, 1, 0.6, 0], ['Pulse', 'v_pulse', 0, 1, 0.4, 0],
-                 ['Pulse every', 'v_pdiv', 0, 3, 0, 4, ['1 beat', '2 beats', '1 bar', '2 bars']], ['Motion', 'v_motion', 0, 1, 0.4, 0],
-                 ['Tilt', 'v_tilt', -90, 90, 17, 0], ['Zoom', 'v_zoom', 0.5, 16, 1, 0], ['Perspective', 'v_persp', 0, 1, 0.44, 0], ['Orbit', 'v_orbit', 0, 1, 0.4, 0],
-                 ['Yaw', 'v_yaw', -180, 180, 0, 0], ['Lie', 'v_lie', 0, 1, 0, 0]];
-  var VCHAN = [['Presence', 'v_presence', 0, 1, 0.5, 0], ['Response', 'v_response', 0, 1, 0.5, 0], ['Pulse', 'v_cpulse', 0, 1, 0.7, 0], ['Detail', 'v_detail', 0, 1, 0.75, 0],
-               ['Size', 'v_size', 0.5, 1.5, 1, 0], ['Alpha', 'v_alpha', 0, 1, 1, 0]];
-  /* Orbit turns the form at ORBIT_K * Orbit^2 rad/s: Orbit 0.4 is the turn the default Motion (0.4) gave before
-     the camera took the turn over from Motion */
-  var ORBIT_K = 0.4737;
-  /* The stage FX and each channel's particles (2026-10-06): blocks of their own past the first ones (those are
-     full: VGLOBAL may not pass 16, VCHAN not 8), so no saved id moves. A state saved before them has none of
-     these ids and takes the defaults: every effect Off, every channel Surface, the stage exactly as it was.
-     VSTRUCT: switches that change which knobs the panel shows. */
-  var VFXBASE = VBASE + 256, VPSLOT = VBASE + 512, VPSTRIDE = 8;
-  /* the color maps (matplotlib's, 9 stops each; Rainbow: the hue circle); magma and inferno start near black, so
-     a channel at their start would vanish: those begin a little in */
-  var COLMAP_NAMES = ['Viridis', 'Magma', 'Plasma', 'Inferno', 'Turbo', 'Rainbow', 'Cool-warm'];
-  var COLMAPS = ['440154472d7b3b528b2c728e21918c28ae805ec962addc30fde725', '0000041d114751127c832681b73779e75263fc8961fec488fcfdbf',
-                 '0d08874c02a17e03a8aa2395cc4778e66c5cf89540fdc527f0f921', '000004210c4a57106e8a226abc3754e45a31f98e09f9cb35fcffa4',
-                 '30123b466be328bceb32f298a4fc3ceecf3afb7e21d02f057a0403', null, '3b4cc06282ea8db0feb9d0f9dddcdcf5c4acf4987add5f4bb40426'];
-  var COLMAP_LO = [0, 0.22, 0, 0.22, 0, 0, 0];
-  /** Map m at t (0..1) -> [r, g, b] 0..1. */
-  function colMap(m, t) {
-    t = Math.max(0, Math.min(1, t));
-    if (!COLMAPS[m]) return Knobs.hslRgb(t * 330, 85, 58); // Rainbow: red round to magenta
-    t = COLMAP_LO[m] + (1 - COLMAP_LO[m]) * t;
-    var hx = COLMAPS[m], x = t * 8, i = Math.min(7, Math.floor(x)), f = x - i, out = [];
-    for (var ch = 0; ch < 3; ch++) {
-      var a = parseInt(hx.substr(i * 6 + ch * 2, 2), 16), b = parseInt(hx.substr(i * 6 + 6 + ch * 2, 2), 16);
-      out.push((a + (b - a) * f) / 255);
-    }
-    return out;
-  }
-  var OFFON = ['Off', 'On'];
-  var VFX = [['Mirror', 'fx_mir', 0, 1, 0, 2, OFFON], ['Divisions', 'fx_mir_div', 2, 8, 2, 7], ['Opacity', 'fx_mir_op', 0, 1, 0.5, 0], ['Original on top', 'fx_mir_top', 0, 1, 1, 2, OFFON],
-             ['Feedback', 'fx_fb', 0, 1, 0, 2, OFFON], ['Amount', 'fx_fb_amt', 0, 1, 0.5, 0], ['Zoom', 'fx_fb_zoom', -1, 1, 0, 0], ['Rotate', 'fx_fb_rot', -1, 1, 0, 0],
-             ['Drift X', 'fx_fb_dx', -1, 1, 0, 0], ['Drift Y', 'fx_fb_dy', -1, 1, 0, 0], ['Hue', 'fx_fb_hue', -1, 1, 0, 0], ['Blend', 'fx_fb_blend', 0, 1, 0, 2, ['Max', 'Add']],
-             ['Kick', 'fx_fb_kick', 0, 1, 0, 0],
-             ['Tracer', 'fx_tr', 0, 1, 0, 2, OFFON], ['Frames', 'fx_tr_n', 2, 180, 6, 179], ['Spacing', 'fx_tr_gap', 1, 8, 3, 8], ['Fade', 'fx_tr_fade', 0, 1, 0.6, 0],
-             // the stage's colors (2026-10-06): Pitch (each channel its note's hue, as always), Palette (a color map
-             // spread over the channels, the louder further along), Cycle (the map running by, each channel offset)
-             ['Color', 'col_mode', 0, 2, 0, 3, ['Pitch', 'Palette', 'Cycle']], ['Map', 'col_map', 0, 6, 0, 7, COLMAP_NAMES],
-             ['Spread', 'col_spread', 0, 1, 0.8, 0], ['Level', 'col_lvl', 0, 1, 0.3, 0], ['Speed', 'col_speed', 0, 1, 0.35, 0],
-             ['Bloom', 'fx_bl', 0, 1, 0, 2, OFFON], ['Strength', 'fx_bl_str', 0, 1, 0.5, 0], ['Radius', 'fx_bl_rad', 0, 1, 0.5, 0], ['Threshold', 'fx_bl_thr', 0, 1, 0.3, 0]];
-  var VPCHAN = [['Render', 'v_mode', 0, 2, 0, 3, ['Surface', 'Particles', 'Both']], ['Density', 'v_pdens', 0, 1, 0.5, 0], ['Scatter', 'v_pscat', 0, 1, 0.08, 0],
-                ['Jitter', 'v_pjit', 0, 1, 0.3, 0], ['Color jitter', 'v_pcol', 0, 1, 0.25, 0], ['Point size', 'v_psize', 1, 8, 2.5, 0], ['Softness', 'v_psoft', 0, 1, 0.6, 0],
-                ['Fill', 'v_pfill', 0, 1, 0, 0]];
-  var VSTRUCT = { fx_mir: 1, fx_fb: 1, fx_tr: 1, fx_bl: 1, v_mode: 1, col_mode: 1 };
-  var VKINDS = { fx_mir_div: ['len', 'int'], fx_mir_op: ['level', 'pct'], fx_fb_amt: ['env', 'pct'], fx_fb_zoom: ['bipenv', 'bip'], fx_fb_rot: ['bipenv', 'bip'],
-                 fx_fb_dx: ['pan', 'bip'], fx_fb_dy: ['bipenv', 'bip'], fx_fb_hue: ['bipenv', 'bip'], fx_fb_kick: ['attack', 'pct'], fx_tr_n: ['density', 'int'],
-                 col_spread: ['detune', 'pct'], col_lvl: ['level', 'pct'], col_speed: ['lfo', 'pct'], v_pfill: ['density', 'pct'],
-                 fx_bl_str: ['level', 'pct'], fx_bl_rad: ['size', 'pct'], fx_bl_thr: ['env', 'pct'],
-                 fx_tr_gap: ['len', 'frames'], fx_tr_fade: ['env', 'pct'], v_pdens: ['density', 'pct'], v_pscat: ['chance', 'pct'], v_pjit: ['lfo', 'pct'],
-                 v_pcol: ['detune', 'pct'], v_psize: ['size', 'px'], v_psoft: ['attack', 'pct'] };
-  for (var vk0 in VKINDS) KINDS[vk0] = VKINDS[vk0];
-  function vgid(sym) {
-    for (var i = 0; i < VGLOBAL.length; i++) if (VGLOBAL[i][1] === sym) return VBASE + i;
-    for (i = 0; i < VFX.length; i++) if (VFX[i][1] === sym) return VFXBASE + i;
-    return -1;
-  }
-  /** Page state saved before the camera (2026-10-06) has no Orbit: Motion turned the form then, at
-      0.1 * 4^(2 Motion - 1) rad/s; Orbit takes that turn over (Motion keeps the waves' drift). */
-  function migrateVp(vp) {
-    var o = vgid('v_orbit'), m = vgid('v_motion');
-    if (vp && vp[o] == null && vp[m] != null) vp[o] = Math.min(1, Math.sqrt(0.1 * Math.pow(4, 2 * +vp[m] - 1) / ORBIT_K));
-  }
-  function isHost(id) { return id < VBASE; }
-  function addVirtual() {
-    function add(id, d, slot) {
-      var o = { id: id, n: d[0], s: d[1], slot: slot, min: d[2], max: d[3], def: d[4], steps: d[5], flags: 0 };
-      if (d[6]) o.names = d[6];
-      ORDER[id] = o; if (slot < 0) DEFS[o.s] = o; // per slot: vsid(), not sid()
-      if (P[id] == null) P[id] = ui.vp[id] != null ? ui.vp[id] : o.def; // ui: the page's state, loaded below before the host's 'ready' answer
-    }
-    VGLOBAL.forEach(function (d, i) { add(VBASE + i, d, -1); });
-    for (var s = 0; s < SLOTS; s++) VCHAN.forEach(function (d, i) { add(VSLOT + VSTRIDE * s + i, d, s); });
-    VFX.forEach(function (d, i) { add(VFXBASE + i, d, -1); });
-    for (s = 0; s < SLOTS; s++) VPCHAN.forEach(function (d, i) { add(VPSLOT + VPSTRIDE * s + i, d, s); });
-  }
-  function vsid(slot, sym) {
-    for (var i = 0; i < VCHAN.length; i++) if (VCHAN[i][1] === sym) return VSLOT + VSTRIDE * slot + i;
-    for (i = 0; i < VPCHAN.length; i++) if (VPCHAN[i][1] === sym) return VPSLOT + VPSTRIDE * slot + i;
-    return -1;
-  }
-  function vval(slot, sym) { return val(vsid(slot, sym)); }
-
   window.ammo = {
     params: function (list) {
       DEFS = {}; ORDER = {}; SLOTP = {};
@@ -189,7 +97,6 @@
         if (d.slot < 0) DEFS[d.s] = d; else if (d.slot === 0) SLOTP[d.s] = d.id - SLOT_BASE;
       }
       for (var k in ORDER) if (P[k] == null) P[k] = ORDER[k].def;
-      addVirtual();
       structure = true;
     },
     values: function (pairs) { for (var i = 0; i < pairs.length; i++) P[pairs[i][0]] = pairs[i][1]; structure = true; },
@@ -198,18 +105,14 @@
       if (d && STRUCT[d.s]) structure = true; else dirty = true;
     },
     presets: function (list, cur, file) { PRESETS = list; presetNow = cur; patchFile = file || ''; dirty = true; },
-    /* a patch file's page state (a JSON string): looks, the stage's and each channel's visual settings, the
-       camera (eased there, not jumped; a file from before the camera gets its defaults and Motion's turn) */
+    /* a patch file's page state (a JSON string): on desktop the stage's looks, visual settings and camera. Mini
+       has no stage: it keeps the object as it came and writes it back on a save, so a patch makes the round trip
+       desktop -> tablet -> desktop with its looks. */
     page: function (json) {
       var o; try { o = typeof json === 'string' ? JSON.parse(json) : json; } catch (e) { return; }
       if (!o || typeof o !== 'object') return;
-      ui.looks = o.looks && typeof o.looks === 'object' ? o.looks : {};
-      ui.vp = o.vp && typeof o.vp === 'object' ? o.vp : {};
-      migrateVp(ui.vp);
-      if (o.view === 'nested' || o.view === 'merged') ui.view = o.view;
-      for (var id in ORDER) if (!isHost(+id)) P[id] = ui.vp[id] != null ? +ui.vp[id] : ORDER[id].def;
-      camAim(gval('v_yaw') * DEG, 0.6);
-      saveUi(); structure = true;
+      ui.page = o;
+      saveUi();
     },
     rec: function (o) {
       var was = rec.on;
@@ -278,37 +181,30 @@
   }
 
   /* ------------------------------------------------------------- state */
-  // dock: which edge the panel sits on; rail: collapsed to a strip; open: the channels open in the accordion;
-  // grps / secs: per channel, the groups (gen, inst, fx, vg) and the sections open in it; everything shut at first.
-  // single: one at a time (the default): opening a channel, a group or a section closes the others beside it, and
-  // switching it on shuts everything but `last`, the last thing opened {ch, grp, sec}. sel: the channel last opened
-  // (focus, the visual tab). Kept per viewer in localStorage: the page's own, not the patch's. uiv: what was kept
-  // before 2 (any number open, groups open unless folded, a channel's pattern open at first) is not taken back.
-  var ui = { dock: 'left', tab: 'channels', rail: false, sel: 0, open: {}, secs: {}, grps: {}, last: null, single: true, view: 'nested', focus: false, looks: {}, vp: {}, uiv: 2 };
-  var KEEP = ['dock', 'tab', 'rail', 'open', 'secs', 'grps', 'last', 'single', 'view', 'focus', 'looks', 'vp', 'uiv'];
+  // open: the channels open in the accordion; grps / secs: per channel, the groups (gen, inst, fx) and the sections
+  // open in it; everything shut at first. single: one at a time (the default): opening a channel, a group or a
+  // section closes the others beside it, and switching it on shuts everything but `last`, the last thing opened
+  // {ch, grp, sec}. sel: the channel last opened. Kept per viewer in localStorage: the page's own, not the patch's.
+  // uiv: what was kept before 2 (any number open, groups open unless folded, a channel's pattern open at first) is
+  // not taken back. page: the patch's page state, carried for desktop (ammo.page).
+  var ui = { tab: 'channels', sel: 0, open: {}, secs: {}, grps: {}, last: null, single: true, page: null, uiv: 2 };
+  var KEEP = ['tab', 'open', 'secs', 'grps', 'last', 'single', 'page', 'uiv'];
   /* each section's group */
   var GRP_OF = { pat: 'gen', pitch: 'gen', chord: 'gen', drum: 'inst', osc: 'inst', filt: 'inst', amp: 'inst',
-                 drive: 'fx', cho: 'fx', dly: 'fx', rev: 'fx', duck: 'fx', vis: 'vg', part: 'vg' };
+                 drive: 'fx', cho: 'fx', dly: 'fx', rev: 'fx', duck: 'fx' };
   function secsOf(s) { return ui.secs[s] || {}; }
   function isOpen(s) { return !!ui.open[s]; }
   function grpOpen(s, key) { return !!(ui.grps[s] && ui.grps[s][key]); }
   try {
-    var saved = JSON.parse(localStorage.getItem('ammo.ui') || '{}');
+    var saved = JSON.parse(localStorage.getItem('ammo.mini.ui') || '{}');
     if (saved.uiv !== ui.uiv) ['open', 'secs', 'shut', 'single', 'uiv'].forEach(function (k) { delete saved[k]; });
     KEEP.forEach(function (k) { if (saved[k] != null) ui[k] = saved[k]; });
   } catch (e) { /* no storage */ }
-  migrateVp(ui.vp);
-  function saveUi() { camKeep(); try { var o = {}; KEEP.forEach(function (k) { o[k] = ui[k]; }); localStorage.setItem('ammo.ui', JSON.stringify(o)); } catch (e) { /* no storage */ } }
+  if (ui.tab !== 'conductor') ui.tab = 'channels';
+  for (var o0 in ui.open) if (ui.open[o0]) ui.sel = +o0; // an open channel is the one selected
+  function saveUi() { try { var o = {}; KEEP.forEach(function (k) { o[k] = ui[k]; }); localStorage.setItem('ammo.mini.ui', JSON.stringify(o)); } catch (e) { /* no storage */ } }
 
-  var structure = true, dirty = true, drag = null, hover = null, T = 0, t0 = performance.now(), glStatus = 'init', lastRefresh = 0, reveal = false, stageX = null;
-  var LOOKS = [['shell', 'SHELL'], ['ripple', 'RIPPLE'], ['breath', 'BREATH'], ['glow', 'GLOW']];
-  var HINT = { shell: 'Its waveform as a glass surface. Nested: its own shell. Merged: part of one surface.',
-               ripple: 'Each note strikes the surface from its place on the circle of fifths; one crest travels across it and fades.',
-               breath: 'No surface of its own: the whole form swells and stretches with it.',
-               glow: 'Soft light inside the glass, in its color.' };
-  var VIS_HINT = 'Presence: how much the music moves it. Response: how quickly it follows, against Flow. Pulse: how much the beat swells it. ' +
-                 'Detail: a soft round form, or every corner of its wave. Size: its radius, 0.5x to 1.5x (merged: its weight in the surface). ' +
-                 'Alpha: how strongly it shows, so it can sit behind the others without being hidden.';
+  var structure = true, dirty = true, drag = null, hover = null, T = 0, t0 = performance.now(), lastRefresh = 0, reveal = false;
 
   function activeSlots() { var out = []; for (var s = 0; s < SLOTS; s++) if (sval(s, 'gen') > 0) out.push(s); return out; }
   function slotName(s) { return 'Channel ' + (s + 1); }
@@ -333,7 +229,6 @@
       default: return 'OFF';
     }
   }
-  function lookOf(s) { return ui.looks[s] || 'shell'; }
   function keyName() { var sc = ORDER[gid('scale')]; return Knobs.NOTES[Math.round(gval('root')) % 12] + ' ' + (sc && sc.names ? sc.names[Math.round(gval('scale'))].toLowerCase() : ''); }
   function chordName() {
     var sc = Math.round(gval('scale')), pc = F.cr;
@@ -344,7 +239,6 @@
     var d = ORDER[id]; if (!d) return;
     if (d.steps > 0) v = Math.round(v);
     v = Math.max(d.min, Math.min(d.max, v));
-    if (!isHost(id)) { P[id] = v; ui.vp[id] = v; saveUi(); if (VSTRUCT[d.s]) structure = true; else dirty = true; return; }
     if (gesture) send('edit ' + id + ' 1');
     P[id] = v; send('set ' + id + ' ' + (d.steps > 0 ? v.toFixed(0) : v.toFixed(5)));
     if (gesture) send('edit ' + id + ' 0');
@@ -352,7 +246,7 @@
   }
 
   /* patch files and recording: the host shows the dialogs and writes the files */
-  function pageState() { camKeep(); return { v: 1, looks: ui.looks, vp: ui.vp, view: ui.view }; }
+  function pageState() { return ui.page || { v: 1, looks: {}, vp: {}, view: 'nested' }; }
   function savePatch() { send('save ' + JSON.stringify(pageState())); }
   function openPatch() { send('open'); }
   function toggleRec() { send('record ' + (rec.on ? 0 : 1)); }
@@ -366,7 +260,7 @@
 
   /* --------------------------------------------------------------- DOM */
   var $ = function (id) { return document.getElementById(id); };
-  var elStage = $('stage'), elUI = $('ui'), elPanel = $('panel'), elStats = $('stats');
+  var elUI = $('ui'), elPanel = $('panel'), elStats = $('stats');
   function esc(s) { return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
   function knobCell(id, label, compact) {
     return '<div class="kcell' + (compact ? ' compact' : '') + '"><canvas class="knob" data-id="' + id + '"></canvas><span class="klab">' + esc(label) + '</span></div>';
@@ -409,22 +303,11 @@
     for (var i = cells.length; i < 6; i++) out += '<div></div>';
     return out + '</div></div>';
   }
-  function eyeSvg(open) {
-    return open ? '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"></path><circle cx="12" cy="12" r="3"></circle></svg>'
-      : '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3l18 18"></path><path d="M10.6 5.1A10 10 0 0 1 12 5c6.4 0 10 7 10 7a17 17 0 0 1-3.2 4"></path><path d="M6.6 6.6C3.8 8.5 2 12 2 12s3.6 7 10 7a9.6 9.6 0 0 0 5.4-1.6"></path></svg>';
-  }
-  /* the dock button: a window with the panel drawn on the side it will move to */
-  function dockSvg(side) {
-    var x = side === 'right' ? 12 : 3.5;
-    return '<svg width="20" height="16" viewBox="0 0 20 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="18" height="14" rx="2.5"></rect>' +
-      '<rect x="' + x + '" y="3.5" width="4.5" height="9" rx="1" fill="currentColor" stroke="none"></rect></svg>';
-  }
   var SAVE_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
     '<path d="M12 3v11"></path><path d="M7.5 9.5 12 14l4.5-4.5"></path><path d="M4 15v3.5A2.5 2.5 0 0 0 6.5 21h11a2.5 2.5 0 0 0 2.5-2.5V15"></path></svg>';
   var OPEN_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
     '<path d="M3 7.5V18a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9.5a2 2 0 0 0-2-2h-7L10 5H5a2 2 0 0 0-2 2.5z"></path></svg>';
   var LOGO = '<svg width="26" height="26" viewBox="-2 4 24 24" fill="none" stroke="#efe6d8" stroke-width="1.6" stroke-linecap="round"><path d="M15 14 a1 1 0 0 1 -1 1 a2 2 0 0 1 -2 -2 a3 3 0 0 1 3 -3 a5 5 0 0 1 5 5 a8 8 0 0 1 -8 8 a13 13 0 0 1 -13 -13"></path></svg>';
-  function other(side) { return side === 'left' ? 'right' : 'left'; }
 
   /** The DOM from scratch: on structural changes only. The scroll position is kept within a tab. */
   function build() {
@@ -433,27 +316,18 @@
     var act0 = activeSlots();
     if (act0.length && act0.indexOf(ui.sel) < 0) ui.sel = act0[0];
     var body = elPanel.querySelector('.pbody'), scroll = body ? body.scrollTop : 0, sameTab = body && body.getAttribute('data-tab') === ui.tab;
-    elPanel.className = 'glass dock-' + ui.dock + (ui.rail ? ' rail' : '');
+    elPanel.className = 'glass';
     var play = '<button class="playbtn" data-act="play" title="Play / stop (Space)"><span data-txt="play"></span></button>';
     var recb = '<button class="recbtn" data-act="rec" title="Record the output to a WAV file (R)"><span class="rdot"></span><span class="rtime" data-txt="rectime"></span></button>';
-    var dock = '<button class="iconbtn lg" data-act="dock" title="Move the panel to the ' + other(ui.dock) + '">' + dockSvg(other(ui.dock)) + '</button>';
-    var toEdge = ui.dock === 'left' ? '‹' : '›', fromEdge = ui.dock === 'left' ? '›' : '‹';
-    if (ui.rail) {
-      var html = '<button class="iconbtn lg" data-act="rail" title="Open the panel">' + fromEdge + '</button>' + play + recb + dock + '<div class="raildiv"></div>';
-      activeSlots().forEach(function (s) { html += '<button class="raildot" data-pick="' + s + '" title="' + slotName(s) + '"><canvas class="dot" data-slot="' + s + '"></canvas></button>'; });
-      elPanel.innerHTML = html;
-      refresh();
-      return;
-    }
-    var slots = activeSlots(), tabs = [['conductor', 'CONDUCTOR', ''], ['channels', 'CHANNELS', '<b>' + slots.length + '</b>'], ['visual', 'VISUAL', '']];
+    var slots = activeSlots(), tabs = [['conductor', 'CONDUCTOR', ''], ['channels', 'CHANNELS', '<b>' + slots.length + '</b>']];
     var out = '<div class="ptop">' + LOGO + '<span class="brand">AMMONITE</span>' +
       '<div class="preset"><button data-act="preset-prev" title="Previous preset">‹</button><span class="name" data-txt="preset"></span><button data-act="preset-next" title="Next preset">›</button></div>' +
-      '<button class="iconbtn lg" data-act="save" title="Save the patch to a file (Ctrl+S)">' + SAVE_SVG + '</button>' +
-      '<button class="iconbtn lg" data-act="open" title="Open a patch file (Ctrl+O)">' + OPEN_SVG + '</button>' +
-      '<div class="grow"></div>' + recb + play + dock + '<button class="iconbtn lg" data-act="rail" title="Collapse the panel">' + toEdge + '</button></div>' +
+      '<button class="iconbtn" data-act="save" title="Save the patch to a file (Ctrl+S)">' + SAVE_SVG + '</button>' +
+      '<button class="iconbtn" data-act="open" title="Open a patch file (Ctrl+O)">' + OPEN_SVG + '</button>' +
+      '<div class="grow"></div>' + recb + play + '</div>' +
       '<div class="tabs" role="tablist">';
     tabs.forEach(function (t) { out += '<button class="tab" role="tab" data-tab="' + t[0] + '" aria-selected="' + (ui.tab === t[0]) + '">' + t[1] + (t[2] ? ' ' + t[2] : '') + '</button>'; });
-    out += '</div><div class="pbody" data-tab="' + ui.tab + '">' + (ui.tab === 'conductor' ? conductorHtml() : ui.tab === 'visual' ? visualHtml(slots) : channelsHtml(slots)) + '</div>';
+    out += '</div><div class="pbody" data-tab="' + ui.tab + '">' + (ui.tab === 'conductor' ? conductorHtml() : channelsHtml(slots)) + '</div>';
     elPanel.innerHTML = out;
     body = elPanel.querySelector('.pbody');
     if (sameTab) body.scrollTop = scroll;
@@ -473,7 +347,7 @@
         '<div class="row center">' + selectEl(gid('prog')) + '</div><canvas class="prog"></canvas>' +
         '<div data-chips-prog="1"></div>' + chipRow(gid('change'), 'CHANGE') + chipRow(gid('restart'), 'RESTART')) +
       group('TIME',
-        '<div class="row center" style="gap:14px"><span class="big tempo" data-txt="tempo"></span><span class="lab">BPM</span><span class="pill" data-txt="sync"></span><div class="grow"></div>' + chipRow(gid('sync'), 'SYNC') + '</div>' +
+        '<div class="row center" style="gap:14px"><span class="big tempo" data-txt="tempo"></span><span class="lab">BPM</span></div>' +
         four([knobCell(gid('tempo'), 'Tempo'), knobCell(gid('swing'), 'Swing'), knobCell(gid('octave'), 'Octave'), knobCell(gid('volume'), 'Volume')])) +
       group('MACROS', four([knobCell(gid('macro1'), 'Bloom'), knobCell(gid('macro2'), 'Motion'), knobCell(gid('macro3'), 'Space'), knobCell(gid('macro4'), 'Grit')])) +
       wideGroup('SPACE', srow('spaceview', -1, [knobCell(gid('rev_size'), 'Size'), knobCell(gid('rev_decay'), 'Decay'), knobCell(gid('rev_damp'), 'Damping'),
@@ -496,7 +370,7 @@
     return html;
   }
 
-  /** One channel: the row (always), and what it contains (when open): the generator's sections, the instrument's, its look. */
+  /** One channel: the row (always), and what it contains (when open): the generator's sections, the instrument's, its effects. */
   function channelHtml(s) {
     var open = isOpen(s), k = function (sym, label) { return knobCell(sid(s, sym), label); };
     var html = '<div class="ch' + (open ? ' open' : '') + '" data-ch="' + s + '"><div class="chrow">' +
@@ -506,10 +380,9 @@
       '<span class="note" data-note="' + s + '"></span>' +
       '<canvas class="hfader" data-id="' + sid(s, 'level') + '" title="Level"></canvas>' +
       '<canvas class="hfader pan" data-id="' + sid(s, 'pan') + '" title="Pan"></canvas>' +
-      '<button class="tog eye" data-id="' + sid(s, 'show') + '" data-toggle="1" title="Show in the visualizer"></button>' +
       '<button class="tog mute" data-id="' + sid(s, 'mute') + '" data-toggle="1" title="Mute">M</button></div>';
     if (!open) return html + '</div>';
-    var gen = genOf(s), look = lookOf(s);
+    var gen = genOf(s);
     var body = '';
     var rhythm = [k('arp_div', 'Division'), k('arp_len', 'Length'), k('arp_density', 'Density'), k('arp_gate', 'Gate'), k('arp_vary', 'Vary'), k('arp_ratchet', 'Ratchet')];
     if (gen === GEN_ARP) {
@@ -540,12 +413,6 @@
       csec(s, 'filt', 'FILTER', srow('filtview', s, [k('cutoff', 'Cutoff'), k('reso', 'Reso'), k('filter_type', 'Type'), k('filt_amt', 'Env amt'), k('filt_a', 'Attack'), k('filt_d', 'Decay')])) +
       csec(s, 'amp', 'AMP', srow('envview', s, [k('amp_a', 'Attack'), k('amp_d', 'Decay'), k('amp_s', 'Sustain'), k('amp_r', 'Release'), k('pitch_amt', 'Pitch env'), k('pitch_d', 'Pitch dec')]));
     body += cgrp(s, 'inst', 'INSTRUMENT', chipRow(sid(s, 'inst'), ''), inst) + cgrp(s, 'fx', 'EFFECTS', '', effectsHtml(s, k));
-    var vis = '<div class="lookrow"><span class="lab">LOOK</span><div class="lookseg">';
-    for (var i = 0; i < LOOKS.length; i++) vis += '<button data-look="' + LOOKS[i][0] + '" data-slot="' + s + '" aria-pressed="' + (look === LOOKS[i][0]) + '">' + LOOKS[i][1] + '</button>';
-    vis += '</div><button class="small" data-id="' + sid(s, 'show') + '" data-toggle="1" data-shown="' + s + '"></button></div><div class="hint">' + esc(HINT[look]) + '</div>' +
-      srow('motionview', s, [knobCell(vsid(s, 'v_presence'), 'Presence'), knobCell(vsid(s, 'v_response'), 'Response'), knobCell(vsid(s, 'v_cpulse'), 'Pulse'), knobCell(vsid(s, 'v_detail'), 'Detail'),
-        knobCell(vsid(s, 'v_size'), 'Size'), knobCell(vsid(s, 'v_alpha'), 'Alpha')]) + '<div class="hint">' + esc(VIS_HINT) + '</div>';
-    body += cgrp(s, 'vg', 'VISUAL', '', csec(s, 'vis', 'LOOK', vis) + csec(s, 'part', 'PARTICLES', particleHtml(s, look)));
     return html + '<div class="chbody">' + body + '</div></div>';
   }
 
@@ -563,85 +430,6 @@
         srow('duckview', s, [k('duck_amt', 'Amount')]));
   }
 
-  /** STAGE FX: the picture of the stage passes Mirror, then Feedback, then Tracer, each with its switch in its
-      title; switched off, an effect costs nothing and its group shows only what it does. */
-  function stageFxHtml() {
-    function row(cells) { var o = '<div class="srow"><div class="knobs">' + cells.join(''); for (var i = cells.length; i < 6; i++) o += '<div></div>'; return o + '</div></div>'; }
-    function k(sym, lab) { return knobCell(gid(sym), lab); }
-    function fx(title, sym, what, body, hint) {
-      var on = gval(sym) >= 0.5;
-      return group(title, (on ? body : '') + '<div class="hint flush">' + esc(on ? hint : what) + '</div>', chipRow(gid(sym), ''));
-    }
-    return fx('MIRROR', 'fx_mir', 'Stage FX, first: the stage tiled around itself in mirrored copies, twice over (a kaleidoscope behind the form).',
-        row([k('fx_mir_div', 'Divisions'), k('fx_mir_op', 'Opacity')]) + chipRow(gid('fx_mir_top'), 'ON TOP'),
-        'Divisions: copies across each way, each copy split again as many times. Opacity: how bright the copies are. On top: the form itself in front of its copies.') +
-      fx('FEEDBACK', 'fx_fb', 'Stage FX, second: the last frame drawn back under the new one, moved a little each time: trails, tunnels, spirals.',
-        row([k('fx_fb_amt', 'Amount'), k('fx_fb_zoom', 'Zoom'), k('fx_fb_rot', 'Rotate'), k('fx_fb_dx', 'Drift X'), k('fx_fb_dy', 'Drift Y'), k('fx_fb_hue', 'Hue')]) +
-        row([k('fx_fb_kick', 'Kick')]) + chipRow(gid('fx_fb_blend'), 'BLEND'),
-        'Amount: how long the past lingers. Zoom: the past grows (a tunnel toward you) or shrinks into the form. Rotate: it turns as it goes, a spiral. Drift: it slides ' +
-        'sideways or up and down. Hue: its colors turn as it ages. Kick: drum hits (the beat, with no drums) punch the zoom. Blend: Max keeps the brighter (clean trails), ' +
-        'Add glows where they overlap. At no zoom, turn or drift it is plain trails.') +
-      fx('TRACER', 'fx_tr', 'Stage FX, last: copies of past frames held behind the form, a fixed number of them, like a strobe.',
-        row([k('fx_tr_n', 'Frames'), k('fx_tr_gap', 'Spacing'), k('fx_tr_fade', 'Fade')]),
-        'Frames: how many past frames are held (up to ' + Shells.TRACER_MAX + ', at half resolution; past 24 they are held in groups, the brightest of each). ' +
-        'Spacing: one frame kept in every so many, so the copies spread out. Fade: the older copies dimmer.') +
-      fx('BLOOM', 'fx_bl', 'Stage FX, at the very end: a glow around everything bright, spilling over the dark around it.',
-        row([k('fx_bl_str', 'Strength'), k('fx_bl_rad', 'Radius'), k('fx_bl_thr', 'Threshold')]),
-        'Strength: how bright the glow. Radius: how far it spreads, from a tight halo to a wide haze. Threshold: how bright a thing must be to glow ' +
-        '(low: nearly everything, high: only the brightest crests).') + colorHtml();
-  }
-  /** COLOR: how the stage colors its channels. The panel keeps each channel's note color either way. */
-  function colorHtml() {
-    var mode = Math.round(gval('col_mode')), k = function (sym, lab) { return knobCell(gid(sym), lab); };
-    var cells = mode === 1 ? [k('col_spread', 'Spread'), k('col_lvl', 'Level')] : mode === 2 ? [k('col_spread', 'Spread'), k('col_speed', 'Speed')] : [];
-    var o = '<div class="srow"><div class="knobs">' + cells.join(''); for (var i = cells.length; i < 6; i++) o += '<div></div>';
-    return group('COLOR', (mode ? chipRow(gid('col_map'), 'MAP') + o + '</div></div>' : '') + '<div class="hint flush">' + esc(COL_HINT[mode]) + '</div>', chipRow(gid('col_mode'), ''));
-  }
-  var COL_HINT = ['Pitch: each channel in its note\'s color (the circle of fifths), drums in their own. Palette and Cycle color the stage from a color map instead.',
-                   'Palette: the channels spread along the map (Spread: how far apart), each moving further along as it plays louder (Level).',
-                   'Cycle: the map runs by (Speed), each channel a step behind the next (Spread); maps that do not join end to end run back and forth.'];
-  var PART_HINT = { off: 'Render: Surface, the glass as it is. Particles: the same form drawn as points that vibrate. Both: points over the glass.',
-                    shell: 'Density: how many points. Scatter: how far they stray off the surface, at random. Jitter: how much each one shakes, more as it plays louder and on ' +
-                           'its hits. Color jitter: each point its own hue and brightness. Point size, Softness: a hard dot or a soft blur. Fill: from the surface into the whole form. ' +
-                           'Merged: its points on the shared surface, in its color.',
-                    glow: 'Glow as particles: motes filling the glass instead of the light (Both: both). Density, Scatter, Jitter, Color jitter, Point size, Softness as for a shell.',
-                    pearl: 'Ripple and breath have no surface of their own: when no shell is up, the pearl drawn for them is made of these points.' };
-  /** A channel's particles, in its VISUAL section: Surface / Particles / Both and, unless Surface, their knobs. */
-  function particleHtml(s, look) {
-    var mode = Math.round(vval(s, 'v_mode')), kc = function (sym, lab) { return knobCell(vsid(s, sym), lab); };
-    return '<div class="chipline">' + chipRow(vsid(s, 'v_mode'), 'RENDER') + '</div>' +
-      (mode ? srow('partview', s, [kc('v_pdens', 'Density'), kc('v_pscat', 'Scatter'), kc('v_pjit', 'Jitter'), kc('v_pcol', 'Color jitter'), kc('v_psize', 'Point size'), kc('v_psoft', 'Softness')]) +
-        (look === 'glow' ? '' : '<div class="srow"><div class="knobs">' + kc('v_pfill', 'Fill') + '<div></div><div></div><div></div><div></div><div></div></div></div>') : '') +
-      '<div class="hint">' + esc(!mode ? PART_HINT.off : look === 'glow' ? PART_HINT.glow : look === 'shell' ? PART_HINT.shell : PART_HINT.pearl) + '</div>';
-  }
-
-  function visualHtml(slots) {
-    var html = group('STAGE',
-      '<div class="row center"><span class="lab w64">FORM</span><div class="seg"><button data-view="nested" aria-pressed="' + (ui.view === 'nested') + '">NESTED</button><button data-view="merged" aria-pressed="' + (ui.view === 'merged') + '">MERGED</button></div></div>' +
-      '<div class="hint flush">' + (ui.view === 'nested' ? 'Each channel its own shell, inner to outer.' : 'Every channel\'s wave added into one surface.') + '</div>' +
-      '<div class="row center"><span class="lab w64">FOCUS</span><button class="small" data-act="focus" aria-pressed="' + ui.focus + '">' + (ui.focus ? 'On' : 'Off') + '</button>' +
-        '<span class="hint flush">Dim the channels that are not open.</span></div>') +
-      group('MOTION',
-        '<div class="srow"><div class="knobs">' + knobCell(gid('v_flow'), 'Flow') + knobCell(gid('v_pulse'), 'Pulse') + knobCell(gid('v_motion'), 'Motion') + '<div></div><div></div><div></div></div></div>' +
-        chipRow(gid('v_pdiv'), 'PULSE EVERY') +
-        '<div class="hint flush">Flow: how slowly the form follows the music, from every transient to a slow tide. Pulse: a swell on the beat, ' +
-          'only while playing. Motion: how fast its waves drift (the turning is the camera\'s Orbit).</div>') +
-      group('CAMERA',
-        '<div class="srow"><div class="knobs">' + knobCell(gid('v_tilt'), 'Tilt') + knobCell(gid('v_zoom'), 'Zoom') + knobCell(gid('v_persp'), 'Perspective') +
-          knobCell(gid('v_orbit'), 'Orbit') + '<div></div><div></div></div></div>' +
-        '<div class="chips"><span class="lab">VIEW</span>' + CAM_NAMES.map(function (v) { return '<button class="chip" data-camview="' + v[0] + '" aria-pressed="false">' + v[1] + '</button>'; }).join('') + '</div>' +
-        '<div class="hint flush">On the stage: drag to turn it, the wheel zooms (0.5x to 16x), a double-click resets. Tilt: seen from above (90°: straight down) or below. ' +
-          'Perspective: how much nearer parts grow. Orbit: how fast it turns by itself. Side lays the form down, its axis left to right.</div>') + stageFxHtml();
-    var rows = '';
-    for (var i = 0; i < slots.length; i++) {
-      var s = slots[i], look = lookOf(s);
-      rows += '<div class="vrow"><canvas class="bar" data-slot="' + s + '"></canvas><span class="nm">' + slotName(s) + '</span><div class="lookseg">';
-      for (var j = 0; j < LOOKS.length; j++) rows += '<button data-look="' + LOOKS[j][0] + '" data-slot="' + s + '" aria-pressed="' + (look === LOOKS[j][0]) + '">' + LOOKS[j][1] + '</button>';
-      rows += '</div><button class="tog eye" data-id="' + sid(s, 'show') + '" data-toggle="1" title="Show in the visualizer"></button></div>';
-    }
-    return html + group('LOOKS', rows || '<div class="empty">No channels playing.</div>');
-  }
-
   /** Values into the DOM in place: texts, chip states, selects, toggles. */
   function refresh() {
     dirty = false; lastRefresh = performance.now();
@@ -654,10 +442,6 @@
     txt('key', keyName()); txt('chord', chordName());
     txt('progpos', F.pl > 0 ? '· ' + (F.pp + 1) + '/' + F.pl : '· ' + ROMAN[F.cd % 7]);
     txt('tempo', (F.bpm ? F.bpm : gval('tempo')).toFixed(F.bpm && Math.abs(F.bpm - Math.round(F.bpm)) > 0.05 ? 1 : 0));
-    var hostSync = F.host && gval('sync') === 0;
-    txt('sync', hostSync ? 'HOST' : 'INTERNAL');
-    document.querySelectorAll('[data-txt="sync"]').forEach(function (el) { el.className = 'pill' + (hostSync ? '' : ' int'); });
-    document.querySelectorAll('[data-shown]').forEach(function (el) { var t = sval(+el.getAttribute('data-shown'), 'show') >= 0.5 ? 'Shown' : 'Hidden'; if (el.textContent !== t) el.textContent = t; });
     document.querySelectorAll('[data-chsub]').forEach(function (el) { var s = slotSub(+el.getAttribute('data-chsub')); if (el.textContent !== s) el.textContent = s; });
     document.querySelectorAll('[data-txt="play"]').forEach(function (el) {
       var want = F.playing ? 'pause' : 'play';
@@ -667,21 +451,14 @@
                                  : '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2.5 L13.5 8 L4 13.5 Z"></path></svg>';
       }
     });
-    // chips and toggles; the camera's view chips light while the camera is at that view (a drag leaves it)
+    // chips and toggles
     document.querySelectorAll('button.chip[data-id]').forEach(function (b) {
       var want = Math.round(val(+b.getAttribute('data-id'))) === +b.getAttribute('data-val') ? 'true' : 'false';
       if (b.getAttribute('aria-pressed') !== want) b.setAttribute('aria-pressed', want);
     });
-    var vnow = camViewNow();
-    document.querySelectorAll('[data-camview]').forEach(function (b) {
-      var want = b.getAttribute('data-camview') === vnow ? 'true' : 'false';
-      if (b.getAttribute('aria-pressed') !== want) b.setAttribute('aria-pressed', want);
-    });
     document.querySelectorAll('[data-toggle]').forEach(function (b) {
       var onv = val(+b.getAttribute('data-id')) >= 0.5 ? 'true' : 'false';
-      if (b.getAttribute('aria-pressed') !== onv || (b.classList.contains('eye') && !b.firstChild)) {
-        b.setAttribute('aria-pressed', onv); if (b.classList.contains('eye')) b.innerHTML = eyeSvg(onv === 'true');
-      }
+      if (b.getAttribute('aria-pressed') !== onv) b.setAttribute('aria-pressed', onv);
     });
     document.querySelectorAll('select.sel').forEach(function (sl) {
       if (document.activeElement === sl) return;
@@ -718,12 +495,6 @@
       duck: function (s) { return ducked(s) ? 'by ' + slotName(Math.round(sval(s, 'duck_src')) - 1) + ' · ' + f(s, 'duck_amt', 'pct') : 'off'; },
       gen: function (s) { return nameOf(sid(s, 'gen')).toLowerCase() + ' · ' + SUMS[genOf(s) === GEN_CHORD ? 'chord' : 'pat'](s); },
       inst: function (s) { return nameOf(sid(s, 'inst')).toLowerCase() + ' · ' + SUMS[isDrum(s) ? 'drum' : 'osc'](s); },
-      vg: function (s) { return SUMS.vis(s); },
-      part: function (s) {
-        var m = Math.round(vval(s, 'v_mode'));
-        return !m ? 'surface' : nameOf(vsid(s, 'v_mode')).toLowerCase() + ' · density ' + Math.round(vval(s, 'v_pdens') * 100) + '%' +
-          (vval(s, 'v_pfill') > 0.005 ? ' · fill ' + Math.round(vval(s, 'v_pfill') * 100) + '%' : '');
-      },
       fx: function (s) {
         var out = [];
         if (sval(s, 'fx_drive') > 0) out.push('drive');
@@ -732,12 +503,7 @@
         if (sval(s, 'rev_send') > 0) out.push('reverb ' + f(s, 'rev_send', 'pct'));
         if (ducked(s)) out.push('ducked');
         return out.length ? out.join(' · ') : 'none';
-      },
-      vis: function (s) { return lookOf(s) + (sval(s, 'show') >= 0.5 ? '' : ' · hidden') + ' · presence ' + Math.round(vval(s, 'v_presence') * 100) + '% · detail ' + Math.round(vval(s, 'v_detail') * 100) + '%' +
-                                 (Math.abs(vval(s, 'v_size') - 1) > 0.005 ? ' · size ' + vval(s, 'v_size').toFixed(2) + 'x' : '') +
-                                 (vval(s, 'v_alpha') < 0.995 ? ' · alpha ' + Math.round(vval(s, 'v_alpha') * 100) + '%' : '') +
-                                 (Math.round(vval(s, 'v_mode')) ? ' · ' + nameOf(vsid(s, 'v_mode')).toLowerCase() + ' ' + Math.round(vval(s, 'v_pdens') * 100) + '%' +
-                                   (vval(s, 'v_pfill') > 0.005 ? ' · fill ' + Math.round(vval(s, 'v_pfill') * 100) + '%' : '') : ''); } };
+      } };
     document.querySelectorAll('[data-sum]').forEach(function (el) {
       var ref = el.getAttribute('data-sum').split(':'), s = +ref[0], t = secsOf(s)[ref[1]] && !el.classList.contains('cgsum') ? '' : SUMS[ref[1]](s);
       if (el.textContent !== t) el.textContent = t;
@@ -763,8 +529,7 @@
     if (!ui.last || ui.last.ch !== s) remember(s);
   }
   function pick(s) {
-    if (ui.rail) { ui.rail = false; ui.tab = 'channels'; openChannel(s); }
-    else if (isOpen(s)) { delete ui.open[s]; if (ui.last && ui.last.ch === s) ui.last = null; }
+    if (isOpen(s)) { delete ui.open[s]; if (ui.last && ui.last.ch === s) ui.last = null; }
     else openChannel(s);
     structure = true; saveUi();
   }
@@ -794,9 +559,6 @@
       } else if (ui.last && ui.last.ch === gs && ui.last.grp === gid0) { ui.last.grp = null; ui.last.sec = null; }
       structure = true; saveUi(); return;
     }
-    if (t.hasAttribute('data-view')) { ui.view = t.getAttribute('data-view'); structure = true; saveUi(); return; }
-    if (t.hasAttribute('data-look')) { ui.looks[t.hasAttribute('data-slot') ? +t.getAttribute('data-slot') : ui.sel] = t.getAttribute('data-look'); structure = true; saveUi(); return; }
-    if (t.hasAttribute('data-camview')) { camView(t.getAttribute('data-camview')); return; }
     if (act === 'single') { ui.single = t.getAttribute('data-single') === '1'; if (ui.single) snapShut(); structure = true; saveUi(); return; }
     if (t.classList.contains('chip')) {
       var cid = +t.getAttribute('data-id'), cv = +t.getAttribute('data-val'), cd = ORDER[cid];
@@ -805,10 +567,7 @@
       return;
     }
     if (t.hasAttribute('data-toggle')) { var id = +t.getAttribute('data-id'); setParam(id, val(id) >= 0.5 ? 0 : 1, true); return; }
-    if (act === 'dock') { ui.dock = other(ui.dock); structure = true; saveUi(); }
-    else if (act === 'rail') { ui.rail = !ui.rail; structure = true; saveUi(); }
-    else if (act === 'focus') { ui.focus = !ui.focus; structure = true; saveUi(); }
-    else if (act === 'play') { send('key 1 32 0'); send('key 0 32 0'); }
+    if (act === 'play') { send('key 1 32 0'); send('key 0 32 0'); }
     else if (act === 'save') savePatch();
     else if (act === 'open') openPatch();
     else if (act === 'rec') toggleRec();
@@ -827,38 +586,53 @@
     if (t.tagName === 'SELECT' && t.hasAttribute('data-id')) { setParam(+t.getAttribute('data-id'), +t.value, true); t.blur(); }
   });
 
-  /* knobs drag up and down, faders left and right; double-click resets, the wheel nudges, Shift is fine */
+  /* knobs drag up and down, faders left and right, by finger, pen or mouse; a double-tap resets, the wheel nudges.
+     Fine (a quarter of the speed): Shift, or a second finger held anywhere while dragging. That finger only holds:
+     it moves nothing, ends nothing, and its tap clicks nothing. A drag starts past SLOP px, so a tap never nudges. */
+  var SLOP = 4, held = {}, nHeld = 0, quietUntil = 0;
   function ctlOf(e) { var t = e.target; return t && t.classList && (t.classList.contains('knob') || t.classList.contains('hfader')) ? t : null; }
   function uiScale() { return Math.min(window.innerHeight / LAYOUT_H, window.innerWidth / MIN_W); }
   document.addEventListener('pointerdown', function (e) {
+    if (drag) { if (!held[e.pointerId]) { held[e.pointerId] = true; nHeld++; } e.preventDefault(); return; }
     var cv = ctlOf(e); if (!cv || e.button !== 0) return;
     e.preventDefault();
     var id = +cv.getAttribute('data-id'), d = ORDER[id]; if (!d) return;
     var now = performance.now();
-    if (cv._lastDown && now - cv._lastDown < 350) { setParam(id, d.def, true); cv._lastDown = 0; return; }
-    cv._lastDown = now;
-    drag = { cv: cv, id: id, x: e.clientX, y: e.clientY, v: val(id), h: cv.classList.contains('hfader') };
-    if (isHost(id)) send('edit ' + id + ' 1');
+    if (cv._tapAt && now - cv._tapAt < 350) { setParam(id, d.def, true); cv._tapAt = 0; return; } // the second tap of two
+    drag = { cv: cv, id: id, pid: e.pointerId, x: e.clientX, y: e.clientY, v: val(id), h: cv.classList.contains('hfader'), moved: false };
+    send('edit ' + id + ' 1');
     try { cv.setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
   });
   document.addEventListener('pointermove', function (e) {
     if (!drag) { hover = ctlOf(e); return; }
-    var d = ORDER[drag.id], range = d.max - d.min, fine = e.shiftKey ? 0.25 : 1;
+    if (e.pointerId !== drag.pid) return;
+    if (!drag.moved) {
+      if (Math.abs(drag.h ? e.clientX - drag.x : e.clientY - drag.y) < SLOP) return;
+      drag.moved = true; drag.x = e.clientX; drag.y = e.clientY; return; // from here, without a jump
+    }
+    var d = ORDER[drag.id], range = d.max - d.min, fine = e.shiftKey || nHeld ? 0.25 : 1;
     var delta = drag.h ? (e.clientX - drag.x) / (drag.cv.clientWidth * uiScale()) : (drag.y - e.clientY) / (200 * uiScale());
-    drag.v = Math.max(d.min, Math.min(d.max, LOGP[d.s] ? drag.v * Math.pow(d.max / d.min, delta * fine) : drag.v + delta * fine * range));
+    drag.v = Math.max(d.min, Math.min(d.max, drag.v + delta * fine * range));
     drag.x = e.clientX; drag.y = e.clientY;
     var v = d.steps > 0 ? Math.round(drag.v) : drag.v;
-    if (P[drag.id] !== v) { P[drag.id] = v; if (isHost(drag.id)) send('set ' + drag.id + ' ' + (d.steps > 0 ? v.toFixed(0) : v.toFixed(5))); else ui.vp[drag.id] = v; dirty = true; }
+    if (P[drag.id] !== v) { P[drag.id] = v; send('set ' + drag.id + ' ' + (d.steps > 0 ? v.toFixed(0) : v.toFixed(5))); dirty = true; }
   });
-  function endDrag() { if (!drag) return; if (isHost(drag.id)) send('edit ' + drag.id + ' 0'); else saveUi(); drag = null; }
-  document.addEventListener('pointerup', endDrag);
-  document.addEventListener('pointercancel', endDrag);
+  function pointerEnd(e) {
+    if (held[e.pointerId]) { delete held[e.pointerId]; nHeld--; quietUntil = performance.now() + 400; return; }
+    if (!drag || e.pointerId !== drag.pid) return;
+    send('edit ' + drag.id + ' 0');
+    drag.cv._tapAt = drag.moved || e.type === 'pointercancel' ? 0 : performance.now();
+    drag = null;
+  }
+  document.addEventListener('pointerup', pointerEnd);
+  document.addEventListener('pointercancel', pointerEnd);
+  // a holding finger's tap (while dragging, or just after) is no click
+  document.addEventListener('click', function (e) { if (drag || nHeld || performance.now() < quietUntil) { e.stopPropagation(); e.preventDefault(); } }, true);
   document.addEventListener('wheel', function (e) {
     var cv = ctlOf(e); if (!cv || !e.deltaY) return;
     e.preventDefault();
     var id = +cv.getAttribute('data-id'), d = ORDER[id]; if (!d) return;
     var step = d.steps > 0 ? 1 : (d.max - d.min) * (e.shiftKey ? 0.005 : 0.02);
-    if (LOGP[d.s]) { setParam(id, val(id) * Math.pow(d.max / d.min, (e.deltaY < 0 ? 1 : -1) * (e.shiftKey ? 0.005 : 0.02)), true); return; }
     setParam(id, val(id) + (e.deltaY < 0 ? step : -step), true);
   }, { passive: false });
   document.addEventListener('contextmenu', function (e) { e.preventDefault(); });
@@ -1335,53 +1109,6 @@
     caption(ctx, 'NOTES' + (c.active ? ' · ' + noteName(c.note) : ''));
   }
 
-  /* visual: what the stage draws of the channel against what it hears. Left, the incoming wave (faint) and the
-     wave the stage draws (bright, smoothed by Flow and Detail, swelling on the pulse); right, two meters: the
-     channel's level now (thin) and the level the stage follows (wide) */
-  function drawMotion(cv, slot) {
-    var g = fit2d(cv); if (!g) return;
-    var ctx = g.ctx, w = g.w, h = g.h, c = CH[slot], m = MO[slot], hue = hueOfSlot(slot), sat = 92, i;
-    pane(ctx, w, h);
-    var mx = w - 52, mid = h / 2 + 6, A = (h - 32) * 0.46, raw = new Path2D(), drawn = new Path2D(), N = 200;
-    var ra = c.active ? Math.min(1, c.amp) : 0, da = Math.min(1, m.lvl * presenceOf(slot) * Math.max(0.2, 1 + 0.6 * m.swell));
-    for (i = 0; i <= N; i++) {
-      var u = i / N, idx = Math.floor(((u * 2) % 1) * 128) % 128, x = 10 + (mx - 20) * u;
-      if (i) { raw.lineTo(x, mid - c.wave[idx] * ra * A); drawn.lineTo(x, mid - m.out[idx] * da * A); }
-      else { raw.moveTo(x, mid - c.wave[idx] * ra * A); drawn.moveTo(x, mid - m.out[idx] * da * A); }
-    }
-    ctx.strokeStyle = 'rgba(220,220,228,0.18)'; ctx.lineWidth = 1; ctx.stroke(raw);
-    Knobs.neon(ctx, drawn, hue, sat, Math.max(1.4, h / 70), (0.35 + 0.65 * Math.min(1, m.lvl)) * (0.2 + 0.8 * vval(slot, 'v_alpha'))); // as opaque as on the stage
-    var top = 22, bot = h - 10, bh = bot - top;
-    ctx.fillStyle = 'rgba(255,255,255,0.05)'; ctx.fillRect(mx + 4, top, 14, bh); ctx.fillRect(mx + 24, top, 6, bh);
-    ctx.fillStyle = Knobs.hsla(hue, sat, 60, 0.85); ctx.fillRect(mx + 4, bot - bh * Math.min(1, m.lvl), 14, bh * Math.min(1, m.lvl));
-    ctx.fillStyle = 'rgba(236,236,240,0.6)'; ctx.fillRect(mx + 24, bot - bh * ra, 6, bh * ra);
-    caption(ctx, 'STAGE' + (m.swell > 0.05 ? ' · swell ' + Math.round(m.swell * 100) + '%' : ''));
-  }
-
-  /* particles: the wave the stage draws (as in the view above) made of points, as the knobs set them: as many as
-     Density says, strayed by Scatter, shaking by Jitter (more as it plays louder), each its own color by Color
-     jitter, as large and soft as Point size and Softness */
-  function phash(n) { var x = Math.sin(n * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
-  function drawPartView(cv, slot) {
-    var g = fit2d(cv); if (!g) return;
-    var ctx = g.ctx, w = g.w, h = g.h, m = MO[slot], hue = hueOfSlot(slot), i;
-    pane(ctx, w, h);
-    var mid = h / 2 + 6, A = (h - 32) * 0.4, n = Math.round(30 + 400 * vval(slot, 'v_pdens')), sc = vval(slot, 'v_pscat'), cj = vval(slot, 'v_pcol');
-    var jit = vval(slot, 'v_pjit') * (0.25 + 0.75 * Math.min(1, m.lvl * 1.3)), pr = Math.max(0.6, vval(slot, 'v_psize') * 0.55), soft = vval(slot, 'v_psoft');
-    var da = Math.max(0.15, Math.min(1, m.lvl * presenceOf(slot))), al = 0.25 + 0.75 * vval(slot, 'v_alpha');
-    ctx.globalCompositeOperation = 'lighter';
-    for (i = 0; i < n; i++) {
-      var u = phash(i + 0.5), idx = Math.floor(((u * 2) % 1) * 128) % 128, f = 9 + 23 * phash(i + 7.1), ph = TAU * phash(i + 3.3);
-      var x = 10 + (w - 20) * u + Math.sin(T * f + ph) * jit * 5, y = mid - m.out[idx] * da * A + (phash(i + 1.7) * 2 - 1) * sc * A * 0.5 + Math.sin(T * f * 1.13 + ph * 2.3) * jit * 5;
-      var hh = hue + (phash(i + 9.9) - 0.5) * cj * 140, ll = 62 * (1 + (phash(i + 4.4) - 0.5) * cj * 0.9), a = al * (0.55 + 0.45 * phash(i + 2.2));
-      if (soft > 0.05) { var gr = ctx.createRadialGradient(x, y, 0, x, y, pr * 1.6); gr.addColorStop(0, Knobs.hsla(hh, 92, ll, a)); gr.addColorStop(1 - soft * 0.6, Knobs.hsla(hh, 92, ll, a * (1 - soft) * 0.6)); gr.addColorStop(1, Knobs.hsla(hh, 92, ll, 0)); ctx.fillStyle = gr; }
-      else ctx.fillStyle = Knobs.hsla(hh, 92, ll, a);
-      ctx.beginPath(); ctx.arc(x, y, pr * 1.6, 0, TAU); ctx.fill();
-    }
-    ctx.globalCompositeOperation = 'source-over';
-    caption(ctx, 'PARTICLES · ' + nameOf(vsid(slot, 'v_mode')).toLowerCase());
-  }
-
   /* a channel row's view: two cycles of what it plays now, as tall as it is loud */
   function drawScope(cv, slot) {
     var g = fit2d(cv); if (!g) return;
@@ -1400,11 +1127,13 @@
     Knobs.neon(ctx, q, hue, sat, 1.8, muted ? 0.12 : 0.25 + 0.75 * amp);
   }
 
-  /* a fader in a channel row: level (with the channel's meter under it) or pan (from the centre) */
+  /* a fader in a channel row: level (with the channel's meter under it) or pan (from the centre); the canvas is the
+     touch target, the bar drawn across its middle */
   function drawFader(cv) {
     var g = fit2d(cv); if (!g) return;
     var id = +cv.getAttribute('data-id'), d = ORDER[id]; if (!d) return;
-    var ctx = g.ctx, w = g.w, h = g.h, spec = specOf(id), c = CH[d.slot], hue = c.hue == null ? 90 : c.hue, sat = c.sat;
+    var h = Math.min(g.h, 34); g.ctx.translate(0, (g.h - h) / 2); // a bar 34 high in a target 54 high
+    var ctx = g.ctx, w = g.w, spec = specOf(id), c = CH[d.slot], hue = c.hue == null ? 90 : c.hue, sat = c.sat;
     var x = (val(id) - d.min) / (d.max - d.min), from = d.min < 0 ? (0 - d.min) / (d.max - d.min) : 0, hot = drag && drag.cv === cv, near = hot || hover === cv;
     var muted = sval(d.slot, 'mute') >= 0.5, r = 6;
     ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(0.5, 0.5, w - 1, h - 1, r); else ctx.rect(0.5, 0.5, w - 1, h - 1);
@@ -1429,249 +1158,13 @@
     ctx.restore();
   }
 
-  /* --------------------------------------------------------- the motion layer
-     Between the telemetry and the stage, so the stage follows the music instead of copying it, frame by frame:
-     - level: a follower that rises and falls at its own speeds (Flow sets them; a channel's Response scales its own)
-     - shape: the drawn wave blends toward the incoming one, then Detail smooths it (low: a soft round form;
-       high: every corner of the wave); the cycle count follows the note just as slowly
-     - hits: each note kicks a damped spring, so the form rings and settles instead of jumping
-     - pulse: a swell on the beat (every beat, 2 beats, bar, 2 bars), as deep as Pulse, only while playing
-     - fades: a channel that stops fades out with its level instead of vanishing; mute and hide have a fade of their
-       own (a quarter second, whatever Flow is), and the level follower keeps following underneath, so a channel
-       shown again comes back at its level now; focus dims fade too
-     - drift accumulates at Motion's rate, so turning it never jumps the form (the form's turn is the camera's) */
-  var MO = {}, PULSE_BEATS = [1, 2, 4, 8], mo = { drift: 0, run: 0, pulse: 0 };
-  for (var m0 = 0; m0 < SLOTS; m0++) MO[m0] = { lvl: 0, shape: new Float32Array(128), t1: new Float32Array(128), out: new Float32Array(128), bytes: new Uint8Array(128),
-                                               note: -1, x: 0, v: 0, lastHit: 0, hit: 0, dim: 1, vis: 1, swell: 0 };
-  function lerp(a, b, t) { return a + (b - a) * t; }
-  function ease(dt, tau) { return 1 - Math.exp(-dt / Math.max(1e-3, tau)); }
-  function presenceOf(s) { return 0.25 + 1.5 * vval(s, 'v_presence'); } // 0.25 .. 1 (middle) .. 1.75
-  /* a circular moving average of radius r: the wave is one cycle, so it wraps */
-  function blur(src, dst, r) {
-    if (r < 1) { dst.set(src); return; }
-    var sum = 0, n = 2 * r + 1, i;
-    for (i = -r; i <= r; i++) sum += src[(i + 128) & 127];
-    for (i = 0; i < 128; i++) { dst[i] = sum / n; sum += src[(i + r + 1) & 127] - src[(i - r + 128) & 127]; }
-  }
-
-  function motion(dt, now) {
-    var flow = gval('v_flow'), mot = Math.pow(4, 2 * gval('v_motion') - 1), nowS = now / 1000;
-    mo.drift += dt * mot;
-    mo.run += ((F.playing ? 1 : 0) - mo.run) * ease(dt, 0.6);
-    var ph = F.beat / PULSE_BEATS[Math.round(gval('v_pdiv'))]; ph -= Math.floor(ph);
-    mo.pulse = Math.pow(0.5 + 0.5 * Math.cos(2 * Math.PI * ph), 3) * gval('v_pulse') * mo.run;
-    var anyOpen = false;
-    for (var o in ui.open) if (ui.open[o] && sval(+o, 'gen') > 0) anyOpen = true;
-    var focusDim = ui.focus && anyOpen && !ui.rail;
-    var w = 2 * Math.PI * lerp(5, 1.6, flow), z = 0.3, steps = Math.max(1, Math.ceil(dt / 0.004)), hs = dt / steps;
-    for (var s = 0; s < SLOTS; s++) {
-      var c = CH[s], m = MO[s], i;
-      var resp = Math.pow(2, (vval(s, 'v_response') - 0.5) * 3.4); // 0.3x .. 1 .. 3.2x the Flow's times
-      var rise = lerp(0.015, 0.35, Math.pow(flow, 1.2)) * resp, fall = lerp(0.12, 2.2, flow) * resp, shapeT = lerp(0.02, 0.9, flow) * resp;
-      var on = c.active && sval(s, 'gen') > 0, seen = sval(s, 'show') >= 0.5 && !c.muted;
-      var target = on ? Math.min(1, c.amp) : 0;
-      m.lvl += (target - m.lvl) * ease(dt, target > m.lvl ? rise : fall);
-      m.vis += ((seen ? 1 : 0) - m.vis) * ease(dt, 0.08);
-      m.dim += ((focusDim && !isOpen(s) ? 0.28 : 1) - m.dim) * ease(dt, 0.25);
-      m.hit = 0;
-      for (i = 0; i < c.notes.length; i++) { var e = c.notes[i]; if (e.t > m.lastHit && e.t <= nowS) { m.lastHit = e.t; m.hit = 1; } }
-      if (m.lvl < 0.002 && !on) { m.x = m.v = 0; m.swell = 0; continue; }
-      // the shape
-      var a = ease(dt, shapeT), r = Math.round(Math.pow(1 - vval(s, 'v_detail'), 1.5) * 24), pk = 0;
-      for (i = 0; i < 128; i++) m.shape[i] += (c.wave[i] - m.shape[i]) * a;
-      blur(m.shape, m.t1, r); blur(m.t1, m.out, r);
-      for (i = 0; i < 128; i++) pk = Math.max(pk, Math.abs(m.out[i]));
-      var g = pk > 1e-3 ? 1 / pk : 0;
-      for (i = 0; i < 128; i++) { m.out[i] *= g; m.bytes[i] = Math.max(0, Math.min(255, Math.round(m.out[i] * 127 + 128))); }
-      m.note = m.note < 0 ? c.note : m.note + (c.note - m.note) * ease(dt, shapeT * 1.5);
-      // the spring: kicked by each note, rings at a pitch Flow lowers, settles
-      if (m.hit) m.v += w * 0.8;
-      for (i = 0; i < steps; i++) { var acc = -w * w * m.x - 2 * z * w * m.v; m.v += acc * hs; m.x += m.v * hs; }
-      m.x = Math.max(-1.5, Math.min(1.5, m.x));
-      m.swell = mo.pulse * vval(s, 'v_cpulse') + m.x * 0.5 * (1 - 0.4 * flow);
-    }
-  }
-
-  /* ---------------------------------------------------------- the camera
-     How the stage is seen. Tilt (degrees seen from above, negative from below), Zoom, Perspective and Orbit (the
-     form's turn of its own, once Motion's) are page parameters with knobs in the Visual tab; Yaw (how far it has
-     turned, in degrees, kept when the state is saved) and Lie (the Side view: the form laid on its side) are page
-     parameters without a knob. They are where the camera is going: what the stage draws eases toward them,
-     quickly under the hand, slowly for a view chip or an opened file, so nothing jumps. On the stage: drag to
-     orbit (the turn of its own waits while held), the wheel zooms, a double-click resets. The form is a body of
-     revolution, so Front and a quarter turn round look alike: Side lays it down instead. */
-  var DEG = Math.PI / 180, TAU = Math.PI * 2;
-  var CAM_NAMES = [['front', 'Front'], ['above', 'Above'], ['side', 'Side'], ['orbit', 'Orbit']];
-  var CAM_VIEWS = { front: { v_tilt: 0, v_lie: 0, v_orbit: 0 }, above: { v_tilt: 90, v_lie: 0, v_orbit: 0 }, side: { v_tilt: 0, v_lie: 1, v_orbit: 0 },
-                    orbit: { v_tilt: 17, v_lie: 0 } }; // orbit: turning again at the speed it had
-  var cam = { on: false, yaw: 0, yawT: 0, tilt: 17, zoom: 1, persp: 0.44, lie: 0, tau: 0.35, grab: null, lastOrbit: 0.4 };
-  /** Aim the yaw at an angle the short way round, over tau seconds. */
-  function camAim(rad, tau) {
-    if (!cam || !cam.on) return;
-    cam.yawT += ((rad - cam.yawT) % TAU + TAU * 1.5) % TAU - TAU / 2; cam.tau = tau;
-  }
-  /** The yaw into the page state (wrapped, in degrees): the camera keeps it live, the state only on a save. */
-  function camKeep() {
-    var id = vgid('v_yaw'); if (!cam || !cam.on || !ORDER[id]) return;
-    var d = ((cam.yawT / DEG) % 360 + 540) % 360 - 180;
-    P[id] = ui.vp[id] = Math.round(d * 10) / 10;
-  }
-  function camView(name) {
-    var v = CAM_VIEWS[name]; if (!v || !DEFS.v_tilt) return;
-    if (gval('v_orbit') > 0.004) cam.lastOrbit = gval('v_orbit');
-    for (var k in v) setParam(gid(k), v[k]);
-    if (name === 'orbit') setParam(gid('v_orbit'), cam.lastOrbit);
-    else camAim(0, 0.45); // face the front
-    cam.tau = 0.45;
-  }
-  /** The view chip the camera is at now, or '' (after a drag, a knob turned, a reset to between). */
-  function camViewNow() {
-    if (!DEFS.v_tilt) return '';
-    if (gval('v_orbit') > 0.004) return gval('v_lie') < 0.01 ? 'orbit' : '';
-    if (Math.abs(cam.yawT - Math.round(cam.yawT / TAU) * TAU) > 0.035) return '';
-    for (var k in CAM_VIEWS) if (k !== 'orbit' && Math.abs(gval('v_tilt') - CAM_VIEWS[k].v_tilt) < 1 && Math.abs(gval('v_lie') - CAM_VIEWS[k].v_lie) < 0.01) return k;
-    return '';
-  }
-  function camReset() {
-    if (!DEFS.v_tilt) return;
-    ['v_tilt', 'v_zoom', 'v_persp', 'v_orbit', 'v_lie'].forEach(function (k) { setParam(gid(k), DEFS[k].def); });
-    camAim(0, 0.45);
-  }
-  function camera(dt) {
-    if (!DEFS.v_tilt) return;
-    var tilt = gval('v_tilt'), zoom = gval('v_zoom'), persp = gval('v_persp'), lie = gval('v_lie');
-    if (!cam.on) { cam.on = true; cam.yaw = cam.yawT = gval('v_yaw') * DEG; cam.tilt = tilt; cam.zoom = zoom; cam.persp = persp; cam.lie = lie; } // the first frame: there at once
-    if (!cam.grab) { var turn = ORBIT_K * Math.pow(gval('v_orbit'), 2) * dt; cam.yaw += turn; cam.yawT += turn; }
-    if (Math.abs(cam.yawT) > 1000) { var wrap = Math.round(cam.yawT / TAU) * TAU; cam.yaw -= wrap; cam.yawT -= wrap; }
-    var a = ease(dt, cam.tau);
-    cam.yaw += (cam.yawT - cam.yaw) * a; cam.tilt += (tilt - cam.tilt) * a; cam.zoom += (zoom - cam.zoom) * a;
-    cam.persp += (persp - cam.persp) * a; cam.lie += (lie - cam.lie) * a;
-  }
-  /* on the stage (the panel above it keeps its own events; keys still go to the host) */
-  elStage.addEventListener('pointerdown', function (e) {
-    if (e.button !== 0 || !DEFS.v_tilt) return;
-    e.preventDefault();
-    cam.grab = { x: e.clientX, y: e.clientY }; cam.tau = 0.07; elStage.classList.add('grab');
-    try { elStage.setPointerCapture(e.pointerId); } catch (err) { /* fine */ }
-  });
-  elStage.addEventListener('pointermove', function (e) {
-    if (!cam.grab) return;
-    var k = 1 / uiScale(), dx = (e.clientX - cam.grab.x) * k, dy = (e.clientY - cam.grab.y) * k, id = gid('v_tilt'), d = ORDER[id];
-    cam.grab.x = e.clientX; cam.grab.y = e.clientY;
-    cam.yawT += dx * 0.006; // the front follows the hand
-    var v = Math.max(d.min, Math.min(d.max, val(id) + dy * 0.35)); // down: seen more from above
-    if (v !== val(id)) P[id] = ui.vp[id] = v;
-    dirty = true;
-  });
-  function endGrab() { if (!cam.grab) return; cam.grab = null; elStage.classList.remove('grab'); saveUi(); dirty = true; }
-  elStage.addEventListener('pointerup', endGrab);
-  elStage.addEventListener('pointercancel', endGrab);
-  elStage.addEventListener('wheel', function (e) {
-    if (!e.deltaY || !DEFS.v_zoom) return;
-    e.preventDefault(); cam.tau = 0.15;
-    setParam(gid('v_zoom'), gval('v_zoom') * Math.exp(-e.deltaY * 0.0012));
-  }, { passive: false });
-  elStage.addEventListener('dblclick', camReset);
-
-  /* ------------------------------------------------------------ the stage
-     What the motion layer made of each channel, centred in the room the panel leaves (sliding there when the
-     panel moves), the whole form swelling a little on the pulse; each channel's particles; the stage FX. */
-  var fxKick = 0;
-  function drawStage(dt, LW, LH, freeW, cx) {
-    var chans = [], flow = gval('v_flow'), drums = false, hit = 0;
-    for (var s = 0; s < SLOTS; s++) {
-      var c = CH[s], m = MO[s];
-      if (m.lvl < 0.002 || m.vis < 0.004) continue;
-      chans.push({ slot: s, bytes: m.bytes, hue: c.hue == null ? 90 : c.hue, sat: c.sat, rgb: null, amp: m.lvl, pres: presenceOf(s), swell: m.swell, look: lookOf(s),
-                   hit: m.hit, hitSeed: c.hitSeed, note: m.note, dim: m.dim, fade: m.vis, size: vval(s, 'v_size'), alpha: vval(s, 'v_alpha'),
-                   mode: Math.round(vval(s, 'v_mode')), pd: vval(s, 'v_pdens'), ps: vval(s, 'v_pscat'), pj: vval(s, 'v_pjit'), pc: vval(s, 'v_pcol'), pz: vval(s, 'v_psize'), pf: vval(s, 'v_psoft'),
-                   pfill: vval(s, 'v_pfill') });
-      if (isDrum(s)) { drums = true; if (m.hit) hit = Math.max(hit, m.vis * m.dim); }
-    }
-    stageColors(chans, dt);
-    // Feedback's Kick: a drum hit (with no drum playing, the beat's pulse) punches the zoom, fading in 0.15 s
-    fxKick = Math.max(fxKick * Math.exp(-dt / 0.15), drums ? hit : mo.pulse);
-    var wantX = cx / LW * 2 - 1;
-    stageX = stageX == null ? wantX : stageX + (wantX - stageX) * (1 - Math.exp(-dt / 0.12));
-    var room = Math.min(freeW / LH, 1);
-    try { Shells.draw(elStage, chans, { merge: ui.view === 'merged' ? 1 : 0, time: T, dt: dt, scale: Math.min(0.95, room * 0.92) * (1 + 0.03 * mo.pulse) * cam.zoom, zoom: cam.zoom, offX: stageX, offY: 0,
-                                       spin: cam.yaw, tilt: cam.tilt * DEG, roll: cam.lie * Math.PI / 2, persp: cam.persp * 0.5, drift: mo.drift, ripple: { str: 0.12 * (1.15 - 0.7 * flow), spd: 2.2 * (1 - 0.55 * flow) },
-                                       fx: stageFx() }); } catch (e) { glStatus = 'draw error ' + e.message; }
-  }
-  /** COLOR, Palette and Cycle: each shown channel's rgb from the map. Palette: the channels in slot order spread
-      along it (Spread 0: all at its middle), each moved further along by its level (Level). Cycle: the map running
-      by at 0.01 .. 0.5 turns a second (Speed), the channels Spread apart; a map that does not join end to end runs
-      back and forth. */
-  var colPhase = 0;
-  function stageColors(chans, dt) {
-    if (!DEFS.col_mode) return;
-    var mode = Math.round(gval('col_mode')), map = Math.round(gval('col_map')), spread = gval('col_spread'), n = chans.length;
-    if (!mode) return;
-    colPhase = (colPhase + dt * 0.01 * Math.pow(50, gval('col_speed'))) % 1;
-    for (var i = 0; i < n; i++) {
-      var pos = n > 1 ? i / (n - 1) : 0.5, t;
-      if (mode === 1) t = 0.5 + (pos - 0.5) * spread * 0.85 + gval('col_lvl') * 0.35 * Math.min(1, chans[i].amp * 1.3) - gval('col_lvl') * 0.12;
-      else {
-        var x = colPhase + spread * i / Math.max(1, n);
-        t = COLMAPS[map] ? 1 - Math.abs(2 * (x % 1) - 1) : x % 1; // Rainbow comes round; the rest go back and forth
-      }
-      chans[i].rgb = colMap(map, t);
-    }
-  }
-  /** The stage FX that are on, as Shells.draw takes them (rates per second). Amount maps as scAnimator's trail
-      slider: a fade per 1/60 s of 0.85 .. 0.995 (sqrt curve). */
-  function stageFx() {
-    var fx = {};
-    if (!DEFS.fx_mir) return fx;
-    if (gval('fx_mir') >= 0.5) fx.mirror = { div: Math.round(gval('fx_mir_div')), op: gval('fx_mir_op'), top: gval('fx_mir_top') >= 0.5 };
-    if (gval('fx_fb') >= 0.5) fx.feedback = { fade: 0.85 + 0.145 * Math.sqrt(Math.max(0.01, gval('fx_fb_amt'))),
-      zoom: 1.2 * gval('fx_fb_zoom') + 4 * gval('fx_fb_kick') * fxKick, rot: 1.5 * gval('fx_fb_rot'), dx: 0.5 * gval('fx_fb_dx'), dy: 0.5 * gval('fx_fb_dy'),
-      hue: Math.PI * gval('fx_fb_hue'), add: gval('fx_fb_blend') >= 0.5 };
-    if (gval('fx_tr') >= 0.5) fx.tracer = { n: Math.round(gval('fx_tr_n')), gap: Math.round(gval('fx_tr_gap')), fade: gval('fx_tr_fade') };
-    if (gval('fx_bl') >= 0.5) fx.bloom = { str: 2.5 * gval('fx_bl_str'), rad: gval('fx_bl_rad'), thr: 0.9 * gval('fx_bl_thr') };
-    return fx;
-  }
-  /* dev.html only (fake-engine.js sets AMMO_DEV_RUN from the URL): warm=N draws N frames of 1/60 s before the first
-     real one (headless shots run few frames, so trails would not build up); bench=N then times N more, each
-     timed on the GPU (in a real-time headless run: read the title), with the CPU time to build them, into the
-     stats overlay. */
-  var DEVRUN = window.AMMO_DEV_RUN || null;
-  var stageArgs = null; // the layout the last frame drew the stage in
-  if (DEVRUN) var devTimer = setInterval(function () { // a timer: headless runs rAF only now and then
-    if (DEVRUN.done) clearInterval(devTimer); else if (stageArgs && performance.now() - t0 > 1500) devRun.apply(null, stageArgs);
-  }, 100);
-  function devRun(LW, LH, freeW, cx, again) {
-    if (!ORDER[VFXBASE]) return;
-    DEVRUN.done = true; DEVRUN.size = window.innerWidth + 'x' + window.innerHeight; // the screenshot resizes the page: warm again then
-    var k, h = 1 / 60;
-    function step() { T += h; var now = performance.now(); sampleTelemetry(now, h); motion(h, now); camera(h); drawStage(h, LW, LH, freeW, cx); }
-    for (k = 0; k < (DEVRUN.warm || 0); k++) step();
-    if (!DEVRUN.bench || again) return;
-    // GPU time per frame, a timer query around each draw (they resolve only in a real-time run, not on virtual time)
-    var qs = [], got = [], t1 = performance.now();
-    for (k = 0; k < DEVRUN.bench; k++) { var q = Shells.gpuBegin(); step(); Shells.gpuEnd(); if (q) qs.push(q); }
-    var cpu = (performance.now() - t1) / DEVRUN.bench; // the page's side: building and submitting a frame
-    var fi = Shells.fxInfo() || {}, tail = ' (' + glStatus + ')  fx ' + (fi.kind || '-') + ' ' + (fi.mb || 0).toFixed(1) + ' MB, ' + (fi.passes || 0) + ' passes  point max ' +
-      (fi.ptMax || 0) + '  canvas ' + elStage.width + 'x' + elStage.height;
-    function done(s) { DEVRUN.result = s + tail; document.title = DEVRUN.result; elStats.style.display = 'block'; }
-    if (!qs.length) { done('stage: no timer queries'); return; }
-    var poll = setInterval(function () {
-      for (var i = qs.length - 1; i >= 0; i--) { var r = Shells.gpuResult(qs[i]); if (r !== -1) { if (r >= 0) got.push(r); qs.splice(i, 1); } }
-      if (qs.length) { document.title = 'stage: ' + qs.length + ' timer queries pending'; return; }
-      clearInterval(poll); got.sort(function (a, b) { return a - b; });
-      done('stage GPU ' + (got.reduce(function (a, b) { return a + b; }, 0) / Math.max(1, got.length)).toFixed(2) + ' ms/frame mean, median ' + (got[got.length >> 1] || 0).toFixed(2) + ' over ' + got.length + ', cpu ' + cpu.toFixed(2) + ' ms');
-    }, 50);
-  }
-
   /* ------------------------------------------------------------ painting */
   var frames = [], last = 0, lastSize = '';
   function frame(now) {
     var dt = last ? Math.min(0.1, (now - last) / 1000) : 0.016; last = now; T = (now - t0) / 1000;
     frames.push({ t: now, dt: dt * 1000 }); if (frames.length > 1200) frames.shift();
     sampleTelemetry(now, dt);
-    motion(dt, now);
-    camera(dt);
-    // the layout: 1440 high, as wide as the window, scaled to it
+    // the layout: LAYOUT_H high, as wide as the window, scaled to it
     var S = uiScale(), LW = window.innerWidth / S, LH = window.innerHeight / S, size = LW.toFixed(1) + 'x' + LH.toFixed(1) + '@' + S.toFixed(4);
     if (size !== lastSize) {
       lastSize = size;
@@ -1680,16 +1173,7 @@
     if (structure) build();
     else if (dirty || now - lastRefresh > 250) refresh();
 
-    var taken = (ui.rail ? RAIL_W : PANEL_W) + 2 * M, freeW = LW - taken, cx = ui.dock === 'left' ? taken + freeW / 2 : freeW / 2;
-    stageArgs = [LW, LH, freeW, cx];
-    if (DEVRUN && DEVRUN.done && DEVRUN.warm && DEVRUN.size !== window.innerWidth + 'x' + window.innerHeight) devRun(LW, LH, freeW, cx, true);
-    drawStage(dt, LW, LH, freeW, cx);
-    if (elToast) {
-      elToast.style.left = cx + 'px';
-      if (toastUntil && now > toastUntil) { elToast.classList.remove('show'); toastUntil = 0; }
-    }
-    elStats.style.left = ui.dock === 'left' ? (taken + M) * S + 'px' : 'auto';
-    elStats.style.right = ui.dock === 'right' ? (taken + M) * S + 'px' : 'auto';
+    if (elToast && toastUntil && now > toastUntil) { elToast.classList.remove('show'); toastUntil = 0; }
 
     // knobs
     var knobs = document.querySelectorAll('canvas.knob');
@@ -1698,7 +1182,7 @@
       var spec = specOf(id), slot = d.slot, ch = slot >= 0 ? CH[slot] : null;
       var st = { v: val(id), hue: ch && ch.hue != null ? ch.hue : Knobs.hueOf(F.cr), sat: ch ? ch.sat : 70, amp: ch ? Math.min(1, ch.amp) : 0.5,
                  dragging: drag && drag.cv === cv, hover: hover === cv, time: T, beat: F.beat, step: ch ? ch.step : null, len: ch ? ch.len : null,
-                 wave: (spec.kind === 'wave' && ch && ch.active) ? (d.s === 'v_detail' ? MO[slot].out : ch.wave) : null,
+                 wave: (spec.kind === 'wave' && ch && ch.active) ? ch.wave : null,
                  ch: slot >= 0 ? { cutoff: sval(slot, 'cutoff'), reso: sval(slot, 'reso'), type: sval(slot, 'filter_type') } : null, scale: S };
       if (d.s === 'root') st.hue = Knobs.hueOf(Math.round(st.v));
       Knobs.draw(cv, spec, st);
@@ -1711,13 +1195,12 @@
       var sl = +el.getAttribute('data-note'), cc = CH[sl], s2 = cc.active ? Knobs.NOTES[cc.pc] + Math.floor(cc.note / 12 - 1) : '';
       if (el.textContent !== s2) el.textContent = s2;
     });
-    var VIEWS = { drumview: drawDrum, chordview: drawChord, scope: drawScope, stepview: drawSteps, rollview: drawRoll, waveview: drawWave, filtview: drawFilter, envview: drawEnv, motionview: drawMotion,
+    var VIEWS = { drumview: drawDrum, chordview: drawChord, scope: drawScope, stepview: drawSteps, rollview: drawRoll, waveview: drawWave, filtview: drawFilter, envview: drawEnv,
                  driveview: drawDriveView, chorusview: drawChorusView, delayview: drawDelayView, duckview: drawDuckView, revview: drawSpaceView, spaceview: drawSpaceView, masterview: drawMasterView };
     for (var vk in VIEWS) document.querySelectorAll('canvas.' + vk).forEach(function (vc) { VIEWS[vk](vc, +vc.getAttribute('data-slot')); });
     document.querySelectorAll('canvas.hfader').forEach(drawFader);
     var wheel = document.querySelector('canvas.wheel'); if (wheel) drawWheel(wheel);
     var pg = document.querySelector('canvas.prog'); if (pg) drawProg(pg);
-    document.querySelectorAll('canvas.partview').forEach(function (pv) { drawPartView(pv, +pv.getAttribute('data-slot')); });
     if (elStats.style.display === 'block') stats_(now);
     requestAnimationFrame(frame);
   }
@@ -1726,21 +1209,12 @@
     for (i = frames.length - 1; i >= 0 && now - frames[i].t <= 10000; i--) { n++; if (frames[i].dt > 20) slow++; if (frames[i].dt > mx) mx = frames[i].dt; }
     var fps = n ? n / Math.min(10, (now - frames[Math.max(0, frames.length - n)].t + 1) / 1000) : 0, tk = 0;
     for (i = stats.tickT.length - 1; i >= 0 && now - stats.tickT[i] <= 10000; i--) tk++;
-    elStats.textContent = 'Ammonite Desktop #' + (INFO.inst || 0) + '  ' + (INFO.fmt || '') + '  ' + F.sr + ' Hz block ' + F.bl + '  window ' + window.innerWidth + 'x' + window.innerHeight + ' scale ' + uiScale().toFixed(2) + '\n' +
+    elStats.textContent = 'Ammonite Mini #' + (INFO.inst || 0) + '  ' + (INFO.fmt || '') + '  ' + F.sr + ' Hz block ' + F.bl + '  window ' + window.innerWidth + 'x' + window.innerHeight + ' scale ' + uiScale().toFixed(2) + '\n' +
       'page ' + fps.toFixed(0) + ' fps (>20 ms: ' + slow + ', max ' + mx.toFixed(1) + ')  tick ' + stats.tickMs.toFixed(3) + ' ms\n' +
       'telemetry ' + (tk / 10).toFixed(0) + ' pushes/s, ' + (stats.frames / Math.max(1, stats.ticks)).toFixed(1) + ' frames each, smoothing ' + LAT.toFixed(0) + ' ms  host idle ' + F.idleMs.toFixed(1) + ' ms  eval ' + F.evalMs.toFixed(3) + ' ms\n' +
-      'webgl ' + glStatus + '\nbeat ' + F.beat.toFixed(2) + '  ' + F.bpm.toFixed(1) + ' BPM ' + (F.playing ? 'playing' : 'stopped') + '  chord ' + chordName() + '  master rms ' + F.mr.toFixed(3) +
-      fxStats();
+      'beat ' + F.beat.toFixed(2) + '  ' + F.bpm.toFixed(1) + ' BPM ' + (F.playing ? 'playing' : 'stopped') + '  chord ' + chordName() + '  master rms ' + F.mr.toFixed(3);
   }
-  function fxStats() {
-    var fi = Shells.fxInfo && Shells.fxInfo();
-    return (fi ? '\nstage fx ' + fi.kind + ' targets, ' + fi.mb.toFixed(1) + ' MB held, ' + fi.passes + ' passes' : '') + (DEVRUN && DEVRUN.result ? '\n' + DEVRUN.result : '');
-  }
-
   /* -------------------------------------------------------------- start */
-  glStatus = Shells.init(elStage);
-  send('gl ' + glStatus);
-  if (glStatus.indexOf('ok') !== 0) { var f = $('fail'); f.style.display = 'block'; f.textContent = 'WebGL unavailable: ' + glStatus; }
   requestAnimationFrame(frame);
   send('ready');
 })();

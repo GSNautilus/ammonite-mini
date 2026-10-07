@@ -1,4 +1,4 @@
-/* Ammonite Desktop: a stand-in engine for working on the page in a plain
+/* Ammonite Mini: a stand-in engine for working on the page in a plain
    browser (dev.html). Not bundled into the plugin.
 
    It plays the part of AmmoniteUI.cpp: it installs a fake WebView bridge
@@ -137,59 +137,25 @@
     TABLE.forEach(function (d) { V[d.id] = d.def; });
     var pv = PRESETS[k].v; for (var id in pv) V[id] = pv[id];
   }
-  // dev.html?preset=2&tab=channels&dock=right&rail=1&open=0,2&secs=pat,filt: a state to open in (screenshots);
-  // open: the channels open, secs: the sections open in each of them, grps: their groups open (gen,inst,fx,vg; with
-  // secs= and no grps=, all four), single=0: many open (One at a time otherwise); view=nested|merged;
-  // cam=front|above|side|orbit: the camera there from the first frame; size=0.5,1.5 / alpha=1,0.2: per channel
-  // from slot 0 (one value: every channel). Page parameters, ids as app.js's VGLOBAL / VCHAN.
+  // dev.html?preset=2&tab=channels&open=0,2&secs=pat,filt: a state to open in (screenshots); open: the channels
+  // open, secs: the sections open in each of them, grps: their groups open (gen,inst,fx; with secs= and no grps=,
+  // all three), single=0: many open (One at a time otherwise). The page's own state, as app.js keeps it.
   var Q = new URLSearchParams(location.search);
   applyPreset(Q.has('preset') ? +Q.get('preset') : 1);
   try {
-    var keep = JSON.parse(localStorage.getItem('ammo.ui') || '{}');
-    ['tab', 'dock', 'view'].forEach(function (k) { if (Q.has(k)) keep[k] = Q.get(k); });
-    var VB = 4096, CAMS = { front: [0, 0, 0], above: [90, 0, 0], side: [0, 0, 1], orbit: [17, 0.4, 0] }; // tilt, orbit, lie
-    if (Q.has('cam') || Q.has('size') || Q.has('alpha')) keep.vp = keep.vp || {};
-    if (CAMS[Q.get('cam')]) { var cv = CAMS[Q.get('cam')]; keep.vp[VB + 4] = cv[0]; keep.vp[VB + 7] = cv[1]; keep.vp[VB + 8] = 0; keep.vp[VB + 9] = cv[2]; }
-    [['size', 4], ['alpha', 5]].forEach(function (o) {
-      if (!Q.has(o[0])) return;
-      var list = Q.get(o[0]).split(',').map(Number);
-      for (var sl = 0; sl < SLOTS; sl++) keep.vp[VB + 16 + 8 * sl + o[1]] = list.length === 1 ? list[0] : list[sl] != null ? list[sl] : 1;
-    });
-    // stage FX and particles (ids as app.js's VFX from 4352, VPCHAN from 4608 in blocks of 8): with any URL option
-    // they start at their defaults (off, Surface) unless given: fx=mirror,feedback,tracer switches them on;
-    // mir=div,op,top / fb=amt,zoom,rot,dx,dy,hue,blend,kick / tr=n,gap,fade set their knobs (a list, any length);
-    // mode=0|1|2 (Surface, Particles, Both), pdens= pscat= pjit= pcol= psize= psoft= pfill=: per channel as size= is;
-    // col=mode,map,spread,level,speed (mode 0 Pitch, 1 Palette, 2 Cycle; map 0..6 as app.js's COLMAP_NAMES);
-    // fx=...,bloom with bl=strength,radius,threshold.
-    // orbit=0..1 the camera's turn; look=shell,glow,ripple per channel; fxfmt=rgba8 the 8-bit fallback; warm=N draws N frames before the first shown (trails build up headless), bench=N times N more (the title).
-    if (Q.toString()) {
-      keep.vp = keep.vp || {};
-      for (var vi = 4352; vi < 4352 + 32; vi++) delete keep.vp[vi];
-      for (vi = 4608; vi < 4608 + 8 * SLOTS; vi++) delete keep.vp[vi];
-      var FXON = { mirror: 0, feedback: 4, tracer: 13, bloom: 22 }, FXK = { mir: 1, fb: 5, tr: 14, col: 17, bl: 23 };
-      (Q.get('fx') || '').split(',').forEach(function (k) { if (FXON[k] != null) keep.vp[4352 + FXON[k]] = 1; });
-      for (var fk in FXK) if (Q.has(fk)) Q.get(fk).split(',').forEach(function (x, i) { if (x !== '') keep.vp[4352 + FXK[fk] + i] = +x; });
-      ['mode', 'pdens', 'pscat', 'pjit', 'pcol', 'psize', 'psoft', 'pfill'].forEach(function (k, i) {
-        if (!Q.has(k)) return;
-        var list = Q.get(k).split(',').map(Number);
-        for (var sl = 0; sl < SLOTS; sl++) if (list.length === 1 || list[sl] != null) keep.vp[4608 + 8 * sl + i] = list.length === 1 ? list[0] : list[sl];
-      });
-      if (Q.has('orbit')) keep.vp[VB + 7] = +Q.get('orbit'); // the camera's turn of its own (after cam=), 0..1
-      if (Q.has('zoom')) keep.vp[VB + 5] = +Q.get('zoom'); // the camera's zoom, 0.5 .. 16
-      if (Q.has('look')) { keep.looks = {}; Q.get('look').split(',').forEach(function (k, sl) { if (k) keep.looks[sl] = k; }); } // per channel from slot 0
-      if (Q.has('warm') || Q.has('bench') || Q.has('fxfmt')) window.AMMO_DEV_RUN = { warm: +Q.get('warm') || 0, bench: +Q.get('bench') || 0, rgba8: Q.get('fxfmt') === 'rgba8' };
-    }
+    var keep = JSON.parse(localStorage.getItem('ammo.mini.ui') || '{}');
+    if (Q.has('tab')) keep.tab = Q.get('tab');
     if (Q.has('open')) {
-      keep.open = {}; keep.secs = {};
+      keep.open = {}; keep.secs = {}; keep.grps = {};
       Q.get('open').split(',').filter(String).forEach(function (sl) {
         keep.open[sl] = true;
         if (Q.has('secs')) { keep.secs[sl] = {}; Q.get('secs').split(',').forEach(function (k) { keep.secs[sl][k] = true; }); }
-        keep.grps = keep.grps || {}; keep.grps[sl] = {};
-        (Q.has('grps') ? Q.get('grps').split(',') : Q.has('secs') ? ['gen', 'inst', 'fx', 'vg'] : []).forEach(function (k) { keep.grps[sl][k] = true; });
+        keep.grps[sl] = {};
+        (Q.has('grps') ? Q.get('grps').split(',') : Q.has('secs') ? ['gen', 'inst', 'fx'] : []).forEach(function (k) { keep.grps[sl][k] = true; });
       });
     }
-    if (Q.toString()) { keep.rail = Q.get('rail') === '1'; keep.single = Q.get('single') !== '0'; keep.uiv = 2; }
-    localStorage.setItem('ammo.ui', JSON.stringify(keep));
+    if (Q.toString()) { keep.single = Q.get('single') !== '0'; keep.uiv = 2; }
+    localStorage.setItem('ammo.mini.ui', JSON.stringify(keep));
   } catch (e) { /* no storage */ }
 
   /* ---------------------------------------------------------- harmony */
