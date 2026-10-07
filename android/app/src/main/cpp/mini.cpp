@@ -19,6 +19,7 @@
    JNI: com.ammonite.mini.Native (Native.kt). Logcat tag AmmoMini. */
 #include <jni.h>
 #include <oboe/Oboe.h>
+#include <oboe/OboeExtensions.h>
 #include <android/log.h>
 #include <sched.h>
 #include <unistd.h>
@@ -118,7 +119,10 @@ std::string pinToBigCores()
 class Player : public oboe::AudioStreamDataCallback, public oboe::AudioStreamErrorCallback
 {
 public:
-    bool exclusive = false; // true: AAudio's MMAP path to the hardware (silent on the SM-P620); false: shared, through the mixer
+    // The SM-P620 plays silence on AAudio's MMAP path (exclusive or shared alike), so it is switched off and the
+    // stream goes through the mixer's fast path (Oboe's OboeExtensions: marked "for testing" but the only way to
+    // keep AAudio's low latency without MMAP). exclusive = true: MMAP allowed and asked for, to try it again.
+    bool exclusive = false;
     bool hint = true; // Android's performance hint (ADPF, through Oboe): the callback's times keep the clocks up
     int patch = 0; // what start() plays: 0 the default, 1 sixteen channels with every effect, 2 sixteen chord channels
     /** The engine to play, and the bridge whose transport says whether it plays (before start). */
@@ -127,6 +131,7 @@ public:
     {
         std::lock_guard<std::mutex> lk(mu_);
         if(stream_) return describe();
+        oboe::OboeExtensions::setMMapEnabled(exclusive);
         oboe::AudioStreamBuilder b;
         b.setDirection(oboe::Direction::Output)
             ->setPerformanceMode(oboe::PerformanceMode::LowLatency)
@@ -213,7 +218,7 @@ private:
         std::snprintf(buf, sizeof buf, "%s %d Hz, burst %d, buffer %d frames (%.1f ms), %s, %s, hint %s",
                       stream_->getAudioApi() == oboe::AudioApi::AAudio ? "AAudio" : "OpenSL ES", stream_->getSampleRate(),
                       stream_->getFramesPerBurst(), stream_->getBufferSizeInFrames(), 1000.0 * stream_->getBufferSizeInFrames() / stream_->getSampleRate(),
-                      stream_->getSharingMode() == oboe::SharingMode::Exclusive ? "exclusive" : "shared",
+                      oboe::OboeExtensions::isMMapUsed(stream_.get()) ? "MMAP" : "legacy (mixer)",
                       stream_->getPerformanceMode() == oboe::PerformanceMode::LowLatency ? "low latency" : "not low latency",
                       hint ? "on" : "off");
         return buf;

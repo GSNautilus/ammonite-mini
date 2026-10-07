@@ -47,12 +47,12 @@ engine and the page this started from.
   - Engine change: `ScopedFlushToZero` on ARM64 (README).
   - The stream: AAudio, 48 kHz, low latency, bursts of 96 frames (2 ms), a
     192-frame buffer (4 ms); the callback on cpu 6-7 (the A78s, 2.4 GHz).
-  - **Correction (phase 2, same day): the exclusive (MMAP) stream these runs
-    used plays silence on this tablet**, though it runs (callbacks, no
-    xruns). Nobody had listened until phase 2. The app now opens a shared
-    stream (through the mixer, same burst and buffer), which is heard; the
-    live numbers below are the exclusive ones, re-measured in shared mode in
-    the phase 2 entry. The offline bench is unaffected.
+  - **Correction (phase 2, same day): these runs played silence.** AAudio's
+    MMAP path, exclusive or shared, runs on this tablet (callbacks, no xruns,
+    the speaker "playing") but nothing is heard. Nobody had listened until
+    phase 2. The app now switches MMAP off and plays through the mixer
+    (bursts of 192 frames, an 8 ms buffer); the live numbers below were
+    re-measured there (phase 2 entry). The offline bench is unaffected.
   - 10 minutes of the default patch (First light), exclusive: 0 xruns,
     callback load 6.5 % mean, 15.7 % worst (633 s).
   - Bench, offline, 10 s at 48 kHz in 192-frame blocks on a big core (after a
@@ -96,23 +96,29 @@ engine and the page this started from.
   waves in the last), and tells the page of a play / stop even when no frame
   comes. Save / Open go through Android's pickers; recordings to the app's
   Music folder (phase 3 finishes both).
-  - **The exclusive stream was silent** (above): the app now asks for a
-    shared one (`--ez exclusive true` to try exclusive again). Heard by the
-    user.
-  - The user, on the tablet: knobs and presets work.
-  - Shared stream, the page running, a channel open (2 min / 1 min):
+  - **No sound, then sound.** The exclusive stream was silent (phase 1's
+    correction); a shared request still landed on the MMAP path, silent too.
+    The app now calls Oboe's `OboeExtensions::setMMapEnabled(false)` (Oboe
+    marks it "for testing"; the only way to keep AAudio's low latency
+    without MMAP), so the stream goes through the mixer: AAudio, 48 kHz,
+    bursts of 192 frames (4 ms), an 8 ms buffer. The status line names the
+    path ("MMAP" / "legacy (mixer)"); `--ez exclusive true` allows MMAP
+    again. Heard by the user.
+  - Through the mixer, the page running, 1 min each:
 
     | patch | load mean | worst | xruns |
     |---|---|---|---|
-    | default (First light) | 4.4 % | 18.6 % | 0 |
-    | 16 ch, every effect | 22.5 % | 45.9 % | 0 |
-    | 16 chord channels | 40.7 % | 68.7 % | 0 |
+    | default (First light) | 3.6 % | 10.1 % | 1 at start |
+    | 16 ch, every effect | 22.3 % | 39.5 % | 1 at start |
+    | 16 chord channels | 39.6 % | 60.7 % | 1 at start |
 
-    Lower than the exclusive runs: the page keeps the big cores clocked
-    higher. Still no channel cap.
+    The one xrun is counted as the stream opens (before its first
+    callback) and never grows. No channel cap.
   - Device checks are kept short now (a minute or two per patch).
-  - Next: the user's ear on a knob turn's delay and on preset switching
-    (phase 2's "done when"); then phase 3.
+- 2026-10-07, **phase 2 done.** The user, on the tablet: knobs and presets
+  work, a knob turn has no felt delay, presets switch cleanly. Next: phase 3
+  (Save / Open are wired to the pickers already; the round trip with
+  desktop, and recordings out to Music).
 
 ## 1. What it is
 
