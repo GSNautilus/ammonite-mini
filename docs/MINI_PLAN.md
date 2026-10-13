@@ -337,7 +337,7 @@ heard without a felt delay, and presets switch cleanly.
   global LFOs, the macros routed in every preset, an assign mode (tap
   Assign, tap the knobs it should move, drag from one to set the amount,
   tap it again to remove). The design and what porting it takes are in
-  `ammonite`'s `docs/PHASE4_BREADTH.md` section 7 (7.5 is Mini's part).
+  `ammonite`'s `docs/PHASE4_BREADTH.md` sections 7 and 8 (7.5 and 8.8 are Mini's part; section 8, agreed 2026-10-13, redesigns it: a pool of sources, a Modulation tab, amounts on tags, a pin bar, an oscilloscope view that suits Mini, which has no 3D stage).
   In short: copy desktop's `engine/` whole and re-apply this repo's engine
   changes (the table under "Changes to `engine/`" in `README.md`) rather
   than carrying the piece across by hand; bench it on the tablet with
