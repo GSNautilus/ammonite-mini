@@ -332,6 +332,19 @@ heard without a felt delay, and presets switch cleanly.
 - **MIDI in or out** (USB / BLE, `android.media.midi`) and **Ableton Link**:
   later, if at all.
 - **Whether the S Pen's hover shows the tooltips** dropped for fingers.
+- **LFOs and modulation** (asked for 2026-10-09; built on desktop first,
+  then here). Desktop has it: two LFOs and four routes per channel, two
+  global LFOs, the macros routed in every preset, an assign mode (tap
+  Assign, tap the knobs it should move, drag from one to set the amount,
+  tap it again to remove). The design and what porting it takes are in
+  `ammonite`'s `docs/PHASE4_BREADTH.md` section 7 (7.5 is Mini's part).
+  In short: copy desktop's `engine/` whole and re-apply this repo's engine
+  changes (the table under "Changes to `engine/`" in `README.md`) rather
+  than carrying the piece across by hand; bench it on the tablet with
+  every route live; send `lf`, `md`, `gl` from the bridge; check the
+  assign mode's targets and rings at tablet size, and that Done (no Esc
+  here) ends it. This is also the time to decide whether the engine stops
+  being a copy (a subtree or a submodule of `ammonite`).
 
 ## 7. Working rules
 
