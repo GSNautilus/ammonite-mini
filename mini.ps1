@@ -106,8 +106,9 @@ function Invoke-Adb {
 function Assert-Device {
     $lines = & $adb devices | Select-Object -Skip 1 | Where-Object { $_ -match '\sdevice$' }
     if (-not $lines) { throw 'no tablet connected: .\mini.ps1 connect -Device <address:port from Wireless debugging>' }
-    # the tablet can be listed twice (adb's own mDNS connection and a manual one): the first of them
-    if (-not $env:ANDROID_SERIAL) { $env:ANDROID_SERIAL = (@($lines)[0] -split '\s+')[0] }
+    # the tablet can be listed twice (adb's own mDNS connections, or one and a manual one): the first of them, its
+    # name up to the tab (an mDNS name can hold a space: "adb-R52XA08RJ4V-fDGtv2 (2)._adb-tls-connect._tcp")
+    if (-not $env:ANDROID_SERIAL) { $env:ANDROID_SERIAL = (@($lines)[0] -split "`t")[0] }
 }
 function Invoke-Gradle {
     if (-not $env:JAVA_HOME) { $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr' }
