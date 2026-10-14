@@ -213,6 +213,21 @@ engine and the page this started from.
     5. Save / Open with the new page line (names, pins, desktop's looks kept),
        a desktop -> tablet -> desktop round trip (phase 3).
 
+- 2026-10-14, **which notes a pattern plays** (`ammonite` `cb46aa7`,
+  `docs/PHASE4_BREADTH.md` section 9): ROTATE for every generator, SHIFT,
+  COUNT, SEED; a second row in each PATTERN and note names in the step
+  view. `engine/`, `tests/engine/` copied again (version 4 patches; a new
+  telemetry field, `stepNote`); `web/` by `mini.ps1 web`. The bridge sends
+  `stepNote` as `sn` in each frame it sends, as AmmoniteUI.cpp does
+  (`test_bridge.py` checks it, and the patch text's version 4).
+  - Checked: `mini.ps1 test` passes; `mini.ps1 apk` builds with the new
+    page (not installed). Headless Edge at the tablet's 1334x800 CSS px:
+    an arp's PATTERN (chips 44 high, the second row under the first's
+    knobs, the step view's names), and synthetic taps and wheel turns on
+    Count, Rotate, Shift, Seed sending the right `set`s.
+  - **Waits for the tablet**: the second row by finger (Count's chips,
+    the three knobs), and the step view's names at the glass's size.
+
 ## 1. What it is
 
 The desktop's synth (16 channels, the conductor, generators, instruments,

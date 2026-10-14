@@ -10,15 +10,18 @@ The `ammonite` repo, branch `desktop`:
 
 | here | there | as of |
 |---|---|---|
-| `engine/` | `desktop/engine/` | `69f0980` (2026-10-13), identical |
-| `tests/engine/` | `desktop/test/tests/engine/` | `69f0980`, identical |
-| `web/` | `desktop/plugin/web/` | `45ac1c0` (2026-10-13): `app.js`, `app.css`, `knobs.js`, `fake-engine.js` identical (`web/SHARED.txt`); `index.html`, `dev.html` Mini's own |
-| `bridge/` | from `desktop/plugin/AmmoniteUI.cpp` | `69f0980` |
+| `engine/` | `desktop/engine/` | `cb46aa7` (2026-10-14), identical |
+| `tests/engine/` | `desktop/test/tests/engine/` | `cb46aa7`, identical |
+| `web/` | `desktop/plugin/web/` | `cb46aa7` (2026-10-14): `app.js`, `app.css`, `knobs.js`, `fake-engine.js` identical (`web/SHARED.txt`); `index.html`, `dev.html` Mini's own |
+| `bridge/` | from `desktop/plugin/AmmoniteUI.cpp` | `cb46aa7` |
 
-**The engine is identical to `ammonite`'s `desktop/engine` at `69f0980`**,
+**The engine is identical to `ammonite`'s `desktop/engine` at `cb46aa7`**,
 copied whole with its tests: the modulation pool (32 LFOs, 16 macros, 128
-routes), version 3 patches (version 2 ones convert on load), the Custom
-progression, Fine tune, the CPU meter's field in the telemetry. Mini's one
+routes), version 4 patches (versions 2 and 3 convert on load), the Custom
+progression, Fine tune, the CPU meter's field in the telemetry, and which
+notes a pattern plays (ROTATE for every generator, SHIFT, COUNT, SEED, and
+each pattern's notes in the telemetry: `ammonite`'s
+`docs/PHASE4_BREADTH.md` section 9). Mini's one
 engine change (2026-10-07: `ScopedFlushToZero` on ARM64, FPCR.FZ) now lives
 upstream, so there is nothing to re-apply: to update, copy both folders
 again and run `mini.ps1 test`. Engine fixes are made in `ammonite`.

@@ -165,8 +165,10 @@ check(all(0 < g["cpu"] <= g["cpk"] < 1 for g in frames), "cpu: the engine's load
 check(f["p"] == 1 and f["h"] == 0 and f["sr"] == 48000, "playing (the bridge's transport), no host clock, 48000 Hz")
 check(set(f["ch"].keys()) == {"0", "1", "2"}, "First light: channels 0, 1, 2 in it (%s)" % ",".join(sorted(f["ch"])))
 c = f["ch"]["0"]
-ckeys = ["a", "n", "pc", "e", "r", "k", "h", "sd", "st", "ln", "v", "ws", "w"]
+ckeys = ["a", "n", "pc", "e", "r", "k", "h", "sd", "st", "ln", "sn", "v", "ws", "w"]
 check([k for k in c.keys() if k not in ("m", "dk")] == ckeys, "a channel's fields: %s" % ",".join(c.keys()))
+check(len(c["sn"]) == c["ln"] == 8 and all(36 <= x <= 96 for x in c["sn"]),
+      "sn: the pattern's notes, LENGTH of them (First light's Up over fifths, every step a hit): %s" % c["sn"])
 wave = base64.b64decode(c["w"])
 check(len(wave) == 128 and max(abs(struct.unpack("b", bytes([x]))[0]) for x in wave) in (126, 127), "its wave: 128 signed bytes, normalised to 127")
 check(set(hostinfo.keys()) == {"idleMs", "evalMs"}, "and the host's numbers: idleMs, evalMs")
@@ -297,8 +299,8 @@ n = DLL.ammo_bridge_patch_text(r.b, None, 0)
 buf = C.create_string_buffer(n + 1)
 DLL.ammo_bridge_patch_text(r.b, buf, n + 1)
 text2 = buf.value.decode()
-check(text2.startswith("ammonite-desktop 3\n") and "%d -0.25" % route_id(127, "amt") in text2,
-      "the patch text (version 3) has route 128's amount")
+check(text2.startswith("ammonite-desktop 4\n") and "%d -0.25" % route_id(127, "amt") in text2,
+      "the patch text (version 4) has route 128's amount")
 r.say("preset 1")
 check(r.e.get_id(route_id(127, "src")) == 0, "a preset clears it")
 DLL.ammo_bridge_opened(r.b, b"routed.ammo", text2.encode(), len(text2.encode()))

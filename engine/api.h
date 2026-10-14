@@ -25,6 +25,7 @@ extern "C" {
 #define AMMO_POLY     6   /* voices per channel */
 #define AMMO_LFOS     32  /* the modulation pool's LFOs */
 #define AMMO_ROUTES   128 /* its routes */
+#define AMMO_STEPS    16  /* the longest pattern (LENGTH) */
 
 typedef struct AmmoClock
 {
@@ -57,6 +58,10 @@ typedef struct AmmoChannelFrame
     int      hit;        /* a note started in this block */
     uint32_t hitSeed;    /* changes per hit */
     int      step, length; /* the generator's step position */
+    int8_t   stepNote[AMMO_STEPS]; /* the notes of the pattern playing (LENGTH of them, from its first step): MIDI,
+                                      -1 a rest; a chord's strike: its root. A hit the Free dice pick (Random, VARY)
+                                      cannot be foreseen: the note it last played, -2 until it has played. All -1
+                                      before the generator's first step */
     int      voices;     /* voices sounding (a chord: one per note) */
     float    voiceNote[AMMO_POLY]; /* their notes, lowest voice first */
     float    duck;       /* how far its DUCK takes it down in this block, 0..1 */

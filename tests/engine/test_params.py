@@ -15,10 +15,18 @@ ids = [p.id for p in INFOS]
 check(len(ids) == len(set(ids)), f"{len(ids)} parameters, ids unique")
 check(len(GLOBAL) == 32 and GLOBAL["tempo"] == 0 and GLOBAL["volume"] == 10 and GLOBAL["macro4"] == 14,
       f"32 global parameters at ids 0..31: {sorted(GLOBAL.items(), key=lambda kv: kv[1])[:4]} ...")
-check(len(SLOT_PARAMS) == 66 and pid("gen", 0) == 64 and pid("gen", 1) == 192 and pid("glide", 15) == 64 + 128 * 15 + 34,
-      "66 parameters per slot; slot blocks of 128 from id 64 (slot 1 gen = 64, slot 2 gen = 192)")
+check(len(SLOT_PARAMS) == 69 and pid("gen", 0) == 64 and pid("gen", 1) == 192 and pid("glide", 15) == 64 + 128 * 15 + 34,
+      "69 parameters per slot; slot blocks of 128 from id 64 (slot 1 gen = 64, slot 2 gen = 192)")
+# which notes a pattern plays (section 9): the next free slot indices after the retired 66..89
+check(pid("note_shift", 0) == 64 + 90 and pid("note_count", 0) == 64 + 91 and pid("seed", 0) == 64 + 92
+      and pid("rhy_rotate", 0) == 64 + 41,
+      "Shift, Count, Seed at slot indices 90, 91, 92; Rotate (every generator's now) still 41")
+si = info_id(pid("seed", 0))
+check(si.steps == 65 and si.default == 0 and step_name(pid("seed", 0), 0) == "Free" and step_name(pid("seed", 0), 64) == "64"
+      and step_name(pid("note_count", 0), 2) == "Hits" and info_id(pid("note_shift", 0)).max == 15,
+      "Seed: Free, 1..64; Count: Auto, Steps, Hits; Shift 0..15")
 # the pool's host parameters: per LFO in use and its six settings, the macros' in-use flags and macros 5..16
-check(len(POOL) == 32 * 7 + 16 + 12 and len(INFOS) == 32 + 16 * 66 + len(POOL) == DLL.ammo_param_count(),
+check(len(POOL) == 32 * 7 + 16 + 12 and len(INFOS) == 32 + 16 * 69 + len(POOL) == DLL.ammo_param_count(),
       f"the pool: {len(POOL)} host parameters (32 LFOs x 7, 16 in-use flags, macros 5..16); {len(INFOS)} host parameters in all")
 
 # the golden ids: these never move
@@ -113,7 +121,7 @@ e.set("cutoff", 0.33, 7)
 e.set("gen", 1, 7)
 blob = e.save()
 lines = blob.splitlines()
-check(lines[0] == "ammonite-desktop 3" and f"{pid('tempo')} 123" in blob and f"{pid('cutoff', 7)} 0.33" in blob
+check(lines[0] == "ammonite-desktop 4" and f"{pid('tempo')} 123" in blob and f"{pid('cutoff', 7)} 0.33" in blob
       and f"{pid('gen', 7)} 1" in blob and not any(ln.startswith(f"{pid('gen', 3)} ") for ln in lines),
       f"save: a versioned text, {len(lines) - 1} non-default values")
 f = Engine()

@@ -618,6 +618,19 @@ void Bridge::Tick()
             Num(js, c.step, "%.0f");
             js += ",ln:";
             Num(js, c.length, "%.0f");
+            if(c.active)
+            {
+                // the pattern's notes, LENGTH of them (api.h: -1 a rest; a note the Free dice pick, the one that
+                // step last played, -2 before it has); the frame sent's, as desktop's AmmoniteUI.cpp
+                js += ",sn:[";
+                for(int k = 0; k < c.length && k < AMMO_STEPS; k++)
+                {
+                    if(k)
+                        js += ",";
+                    Num(js, c.stepNote[k], "%.0f");
+                }
+                js += "]";
+            }
             js += ",v:[";
             for(int k = 0; k < c.voices && k < AMMO_POLY; k++)
             {

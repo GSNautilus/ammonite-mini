@@ -66,7 +66,7 @@ class AmmoParamInfo(C.Structure):
 class AmmoChannelFrame(C.Structure):
     _fields_ = [("active", C.c_int), ("muted", C.c_int), ("gen", C.c_int), ("note", C.c_float), ("pitchClass", C.c_int), ("env", C.c_float),
                 ("rms", C.c_float), ("peak", C.c_float), ("hit", C.c_int), ("hitSeed", C.c_uint32), ("step", C.c_int),
-                ("length", C.c_int), ("voices", C.c_int), ("voiceNote", C.c_float * 6), ("duck", C.c_float), ("wave", C.c_float * WAVE_LEN)]
+                ("length", C.c_int), ("stepNote", C.c_int8 * 16), ("voices", C.c_int), ("voiceNote", C.c_float * 6), ("duck", C.c_float), ("wave", C.c_float * WAVE_LEN)]
 
 
 class AmmoFrame(C.Structure):

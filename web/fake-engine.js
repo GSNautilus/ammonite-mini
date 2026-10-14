@@ -95,7 +95,13 @@
     TABLE.push(o); DEF[id] = o;
   }
   GLOBAL.forEach(function (d, i) { add(i, d, -1); G[d[1]] = i; });
-  for (var s = 0; s < SLOTS; s++) SLOTDEF.forEach(function (d, p) { add(SLOT_BASE + STRIDE * s + p, d, s); if (!s) SP[d[1]] = p; });
+  // which notes a pattern plays (the engine's slot indices 90..92, past the retired 66..89)
+  var NOTEDEF = [[90, ['Shift', 'note_shift', 0, 15, 0, 16]], [91, ['Count', 'note_count', 0, 2, 0, 3, ['Auto', 'Steps', 'Hits']]],
+                 [92, ['Seed', 'seed', 0, 64, 0, 65, ['Free'].concat(Array.from({ length: 64 }, function (_, i) { return String(i + 1); }))]]];
+  for (var s = 0; s < SLOTS; s++) {
+    SLOTDEF.forEach(function (d, p) { add(SLOT_BASE + STRIDE * s + p, d, s); if (!s) SP[d[1]] = p; });
+    NOTEDEF.forEach(function (e) { add(SLOT_BASE + STRIDE * s + e[0], e[1], s); if (!s) SP[e[1][1]] = e[0]; });
+  }
   for (var l0 = 0; l0 < POOL_LFOS; l0++) {
     var n0 = 'LFO ' + (l0 + 1) + ' ', s0 = 'lfo' + (l0 + 1) + '_';
     [[n0 + 'in use', s0 + 'on', 0, 1, 0, 2, N.offon], [n0 + 'shape', s0 + 'shape', 0, 6, 0, 7, N.lshape], [n0 + 'sync', s0 + 'sync', 0, 1, 1, 2, N.lsync],
@@ -201,6 +207,8 @@
   applyPreset(Q.has('preset') ? +Q.get('preset') : 1);
   // set=prog:9,prog_len:5,prog_s2:5: global parameters over the preset, by symbol
   if (Q.has('set')) Q.get('set').split(',').forEach(function (kv) { var p = kv.split(':'); if (G[p[0]] != null) V[G[p[0]]] = +p[1]; });
+  // sset=0:arp_pool:1,0:note_shift:1: a channel's parameters over the preset (slot from 0, symbol, value)
+  if (Q.has('sset')) Q.get('sset').split(',').forEach(function (kv) { var p = kv.split(':'); if (SP[p[1]] != null) V[sid(+p[0], p[1])] = +p[2]; });
   try {
     var keep = JSON.parse(localStorage.getItem(UI_KEY) || '{}');
     ['tab', 'dock', 'view'].forEach(function (k) { if (Q.has(k)) keep[k] = Q.get(k); });
@@ -290,6 +298,41 @@
   var VO = []; for (s = 0; s < SLOTS; s++) VO.push({ step: -1, count: 0, ring: [], win: null, env: 0, gateUntil: -1, note: 57, hit: 0, seed: 0, dir: 1, idx: 0, wave: new Float32Array(128) });
   function sv(slot, sym) { return V[sid(slot, sym)]; }
 
+  /* the engine's step grid and note choice, in small (engine/Steps.hpp, Arp.hpp): the Euclid turned by ROTATE; the
+     arp's note from the step (Count Steps) or the hits before it (Hits), MODE, SHIFT; SEED a hash per step */
+  function rotOf(slot, len) { return Math.round(sv(slot, 'rhy_rotate')) % len; }
+  function plays(i, hits, len, rot) { return ((((i - rot) % len + len) % len) * hits) % len < hits; }
+  function hitsBefore(i, hits, len, rot) { var c = 0; for (var q = 0; q < i; q++) if (plays(q, hits, len, rot)) c++; return c; }
+  function seedRoll(seed, i) { var x = Math.sin(seed * 12.9898 + i * 78.233) * 43758.5453; return x - Math.floor(x); }
+  function arpIndex(slot, i, len, hits, rot, n, played) {
+    var mode = Math.round(sv(slot, 'arp_mode')), seed = Math.round(sv(slot, 'seed')), sh = Math.round(sv(slot, 'note_shift')), k;
+    var c = Math.round(sv(slot, 'note_count')) === 2 ? hitsBefore(i, hits, len, rot) : i;
+    if (mode === 5) { if (!seed && !played) return -2; k = Math.floor((seed ? seedRoll(seed, i) : Math.random()) * n); }
+    else if (mode === 3) k = n - 1 - (c % n);
+    else if (mode === 4) { var per = Math.max(1, 2 * n - 2); k = c % per; if (k >= n) k = per - k; }
+    else if (mode === 1) k = 0;
+    else k = c % n;
+    return (k + sh) % n;
+  }
+  function arpNote(slot, h, k) {
+    var pool = h.pools[Math.round(sv(slot, 'arp_pool'))], n = pool.length * Math.round(sv(slot, 'arp_range'));
+    k = (k + Math.round(sv(slot, 'degree'))) % n; // degree: where in the pool the pattern starts
+    return 48 + 12 * (Math.round(sv(slot, 'oct')) + Math.round(V[G.octave])) + pool[k % pool.length] + 12 * Math.floor(k / pool.length);
+  }
+  /** The telemetry's stepNote: each step's note (-1 a rest, -2 a Free random note not played yet). */
+  function stepNotes(slot, h) {
+    var gen = Math.round(sv(slot, 'gen')), rhythm = Math.round(sv(slot, 'chord_rhythm')), hold = gen === 2 && rhythm === 0;
+    var len = hold ? 1 : Math.round(sv(slot, 'arp_len')), hits = hold ? 1 : Math.floor(sv(slot, 'arp_density') * len + 0.5), rot = hold ? 0 : rotOf(slot, len), out = [], vo = VO[slot];
+    var pool = h.pools[Math.round(sv(slot, 'arp_pool'))], n = pool.length * Math.round(sv(slot, 'arp_range'));
+    for (var i = 0; i < len; i++) {
+      if (!plays(i, hits, len, rot)) { out.push(-1); continue; }
+      if (gen === 1) { var k = arpIndex(slot, i, len, hits, rot, n, false); out.push(k < 0 ? (vo.played && vo.played[i] != null ? vo.played[i] : -2) : arpNote(slot, h, k)); }
+      else if (gen === 4) out.push(60);
+      else out.push((gen === 2 ? 48 : 36) + 12 * (Math.round(sv(slot, 'oct')) + Math.round(V[G.octave])) + h.pools[4][0]);
+    }
+    return out;
+  }
+
   function stepVoice(slot, h, dt) {
     var vo = VO[slot], gen = Math.round(sv(slot, 'gen'));
     vo.hit = 0;
@@ -302,17 +345,11 @@
     var st = Math.floor(beat / stepBeats);
     if (playing && st !== vo.step) {
       vo.step = st;
-      var i = ((st % len) + len) % len, hits = Math.floor(sv(slot, 'arp_density') * len + 0.5), mode = Math.round(sv(slot, 'arp_mode'));
-      if ((i * hits) % len < hits && mode > 0) {
-        var pool = h.pools[Math.round(sv(slot, 'arp_pool'))], range = Math.round(sv(slot, 'arp_range')), n = pool.length * range, k;
-        if (mode === 5) k = Math.floor(Math.random() * n);
-        else if (mode === 3) k = n - 1 - (vo.count % n);
-        else if (mode === 4) { var per = Math.max(1, 2 * n - 2); k = vo.count % per; if (k >= n) k = per - k; }
-        else k = vo.count % n;
-        vo.count++;
-        k = (k + Math.round(sv(slot, 'degree'))) % n; // degree: where in the pool the pattern starts
-        var base = 48 + 12 * (Math.round(sv(slot, 'oct')) + Math.round(V[G.octave]));
-        vo.note = base + pool[k % pool.length] + 12 * Math.floor(k / pool.length);
+      var i = ((st % len) + len) % len, hits = Math.floor(sv(slot, 'arp_density') * len + 0.5), mode = Math.round(sv(slot, 'arp_mode')), rot = rotOf(slot, len);
+      if (plays(i, hits, len, rot) && mode > 0) {
+        var pool = h.pools[Math.round(sv(slot, 'arp_pool'))], range = Math.round(sv(slot, 'arp_range')), n = pool.length * range;
+        vo.note = arpNote(slot, h, arpIndex(slot, i, len, hits, rot, n, true));
+        (vo.played = vo.played || [])[i] = vo.note;
         vo.gateUntil = beat + stepBeats * Math.max(0.05, sv(slot, 'arp_gate'));
         vo.hit = 1; vo.seed = (Math.random() * 65535) | 0;
       }
@@ -343,7 +380,7 @@
       vo.step = st;
       var i = ((st % len) + len) % len, hits = hold ? 1 : Math.floor(sv(slot, 'arp_density') * len + 0.5), w = Math.floor(beat / win);
       if (arp && w !== vo.win) { vo.win = w; vo.count = 0; vo.ring = []; }
-      if ((i * hits) % len < hits) {
+      if (plays(i, hits, len, hold ? 0 : rotOf(slot, len))) {
         var nn = Math.round(sv(slot, 'chord_notes')), tones = h.pools[2].slice(0, 3 + Math.min(1, nn)), vc = Math.round(sv(slot, 'chord_voicing'));
         if (nn === 2) tones.push(tones[0] + 14);
         tones.sort(function (a, b) { return a - b; });
@@ -377,9 +414,9 @@
     vo.vnotes = [];
     if (playing && st !== vo.step) {
       vo.step = st;
-      var i = ((st % len) + len) % len, hits = Math.floor(sv(slot, 'arp_density') * len + 0.5);
-      if ((i * hits) % len < hits) {
-        var hit = Math.floor(i * hits / len), pat = Math.round(sv(slot, 'bass_pattern')), root = h.pools[4][0], semis = root;
+      var i = ((st % len) + len) % len, hits = Math.floor(sv(slot, 'arp_density') * len + 0.5), rot = rotOf(slot, len);
+      if (plays(i, hits, len, rot)) {
+        var hit = hitsBefore(i, hits, len, rot), pat = Math.round(sv(slot, 'bass_pattern')), root = h.pools[4][0], semis = root;
         if (pat === 1) semis = hit & 1 ? root + 7 : root;
         if (pat === 2) semis = hit & 1 ? root + 12 : root;
         if (pat === 3) semis = h.pools[0][[0, 2, 4, 5][hit % 4] % h.pools[0].length] + (root - h.pools[0][0]);
@@ -515,7 +552,7 @@
       var e = vo.env * sv(slot, 'level'), muted = sv(slot, 'mute') >= 0.5;
       if (!muted) mr = Math.max(mr, e * 0.5);
       chans[slot] = { a: playing ? 1 : 0, m: muted ? 1 : 0, n: vo.note, pc: ((vo.note % 12) + 12) % 12, e: vo.env, r: e * 0.5, k: e * 0.8, h: vo.hit, sd: vo.seed,
-                      st: Math.max(0, vo.step), ln: Math.round(sv(slot, 'arp_len')), ws: peak * vo.env * sv(slot, 'level') * sv(slot, 'level') * 0.6, w: b64(bytes), // the engine's: at the level (audio taper)
+                      st: Math.max(0, vo.step) % Math.max(1, Math.round(sv(slot, 'arp_len'))), ln: Math.round(sv(slot, 'arp_len')), sn: stepNotes(slot, h), ws: peak * vo.env * sv(slot, 'level') * sv(slot, 'level') * 0.6, w: b64(bytes), // the engine's: at the level (audio taper)
                       v: vo.vnotes && vo.vnotes.length ? vo.vnotes : [vo.note] };
       var dsrc = Math.round(sv(slot, 'duck_src')) - 1; // DUCK: the source's envelope, by the amount
       if (dsrc >= 0 && dsrc !== slot && sv(slot, 'duck_amt') > 0) chans[slot].dk = Math.min(1, VO[dsrc].env) * sv(slot, 'duck_amt');

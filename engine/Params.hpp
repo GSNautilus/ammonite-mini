@@ -200,8 +200,13 @@ enum SlotParam
     cMod1Src = cLfo2Shape + 6, // kRouteParams each: source, destination, amount
     cMod1Dest,
     cMod1Amt,
-    kNumSlotParams = cMod1Src + 4 * 3
+    // which notes a pattern plays (docs/PHASE4_BREADTH.md section 9; ROTATE is cRhythmRotate, every generator's now)
+    cNoteShift = cMod1Src + 4 * 3,
+    cNoteCount,
+    cSeed,
+    kNumSlotParams
 };
+constexpr int kFirstRetiredSlotParam = cLfo1Shape, kEndRetiredSlotParam = cNoteShift; // 66 .. 89
 constexpr int kSlotLfos = 2, kLfoParams = 6, kRoutes = 4, kRouteParams = 3;
 
 enum ParamFlags : uint32_t
@@ -248,6 +253,12 @@ inline const char* const kRhythmPitchNames[]  = {"Fixed", "Root", "Fifth"};
 inline const char* const kDrumModelNames[]    = {"Kick", "Snare", "Hat", "Open hat", "Clap", "Tom", "Rim", "Noise"};
 inline const char* const kDelayDivNames[]     = {"1/32", "1/16", "1/16T", "1/8", "1/8T", "1/8.", "1/4", "1/4T", "1/4.", "1/2", "1/1"};
 inline const char* const kChorusModeNames[]   = {"Chorus", "Ensemble", "Vibrato"};
+inline const char* const kNoteCountNames[]   = {"Auto", "Steps", "Hits"};
+inline const char* const kSeedNames[]       = {"Free", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14",
+                                             "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28",
+                                             "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42",
+                                             "43", "44", "45", "46", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56",
+                                             "57", "58", "59", "60", "61", "62", "63", "64"};
 inline const char* const kDuckSourceNames[]   = {"Off", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"};
 // modulation (Mod.hpp)
 inline const char* const kLfoShapeNames[]  = {"Sine", "Triangle", "Saw up", "Saw down", "Square", "Random", "Drift"};
@@ -381,7 +392,7 @@ inline const ParamDef kSlotDefs[kNumSlotParams] = {
     {"Chord rhythm", "chord_rhythm", 0.f, 2.f, 0.f, 3, kChordRhythmNames, kAI},
     {"Strum", "chord_strum", 0.f, 1.f, 0.f, 0, nullptr, kA},
     {"Bass pattern", "bass_pattern", 0.f, 3.f, 0.f, 4, kBassPatternNames, kAI},
-    {"Rotate", "rhy_rotate", 0.f, 15.f, 0.f, 16, nullptr, kAI},
+    {"Rotate", "rhy_rotate", 0.f, 15.f, 0.f, 16, nullptr, kAI}, // every generator's (the symbol is the Rhythm's of old)
     {"Chance", "rhy_chance", 0.f, 1.f, 1.f, 0, nullptr, kA},
     {"Rhythm pitch", "rhy_pitch", 0.f, 2.f, 0.f, 3, kRhythmPitchNames, kAI},
     {"Drum", "drum_model", 0.f, 7.f, 0.f, 8, kDrumModelNames, kAI},
@@ -430,6 +441,9 @@ inline const ParamDef kSlotDefs[kNumSlotParams] = {
     {"Mod 4 source", "mod4_src", 0.f, 8.f, 0.f, 9, kModSrcNames, kRetired},
     {"Mod 4 destination", "mod4_dest", 0.f, (float)(kNumModDests - 1), 0.f, kNumModDests, kModDestNames, kRetired},
     {"Mod 4 amount", "mod4_amt", -1.f, 1.f, 0.f, 0, nullptr, kRetired},
+    {"Shift", "note_shift", 0.f, 15.f, 0.f, 16, nullptr, kAI},           // the Arp's notes, n places up the pool (mod its size)
+    {"Count", "note_count", 0.f, 2.f, 0.f, 3, kNoteCountNames, kAI},    // Auto: the arp Steps, Chord's Arp Hits
+    {"Seed", "seed", 0.f, 64.f, 0.f, 65, kSeedNames, kAI},             // the dice: Free, or a pattern per seed
 };
 
 inline const ParamDef kHiddenDef = {"(reserved)", "reserved", 0.f, 1.f, 0.f, 0, nullptr, pfHidden};

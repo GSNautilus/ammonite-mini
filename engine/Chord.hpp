@@ -11,14 +11,16 @@
  *  RHYTHM Hold plays each chord once, on the chord change (every bar while
  *  the progression is off), held until the next, and comes in at once when
  *  the channel starts mid-chord; Steps strikes it on the step grid
- *  (DIVISION, LENGTH, DENSITY, GATE as the arp). STRUM rolls the notes up
+ *  (DIVISION, LENGTH, DENSITY, ROTATE, GATE as the arp). STRUM rolls the notes up
  *  from the lowest, up to 40 ms apart, all released together.
  *  RHYTHM Arp plays the voiced chord one note per step of the grid (every
- *  rhythm parameter as the arp's: DIVISION, LENGTH, DENSITY, GATE, VARY,
- *  RATCHET), counting the hits from each chord change: Up starts on the
- *  root, wherever the voicing put it, and climbs, wrapping round to the
- *  voicing's lowest note; Down starts on the root and descends the same
- *  way round; Up-down climbs and comes back; Random picks any. The arp's
+ *  rhythm parameter as the arp's: DIVISION, LENGTH, DENSITY, ROTATE, GATE,
+ *  VARY, RATCHET, SEED), counting the hits from each chord change (COUNT
+ *  Hits, and Auto; Steps: the step's place in the pattern instead): Up
+ *  starts on the root, wherever the voicing put it, and climbs, wrapping
+ *  round to the voicing's lowest note; Down starts on the root and descends
+ *  the same way round; Up-down climbs and comes back; Random picks any.
+ *  SHIFT starts that many notes further round. The arp's
  *  Off and Loop play as Up. LET RING holds every note to the chord change
  *  (GATE does nothing then), so the chord builds up across the steps and
  *  all of it is released at the change, as Hold's is. STRUM does nothing.
@@ -80,6 +82,7 @@ class ChordGen
     }
     int  StepPos() const { return pos_; }
     int  StepLen() const { return len_; }
+    bool LastStep(long long& k) const { return grid_.Last(k); }
 
     /** The chord's notes for NOTES (3..5): how many voices an arpeggio can hold. */
     static int Notes(const ChordParams& c) { return 3 + (c.notes < 0 ? 0 : (c.notes > 2 ? 2 : c.notes)); }
@@ -95,7 +98,8 @@ class ChordGen
         const bool   hold = c.rhythm == kChordHold;
         const double d    = hold ? WindowBeats(cx) : kArpDivBeats[a.div];
         StepHit      h;
-        if(!grid_.Begin(clk, d, hold ? 1 : a.length, hold ? 1.f : a.density, cx.restart, cx.change, hold, h))
+        if(!grid_.Begin(clk, d, hold ? 1 : a.length, hold ? 1.f : a.density, hold ? 0 : a.rotate, cx.restart, cx.change,
+                        hold, h))
             return 0;
         pos_ = h.pos;
         len_ = h.len;
@@ -119,6 +123,82 @@ class ChordGen
             out[i].gate  = std::max(1, gate - i * gap); // strummed up, released together
         }
         return n;
+    }
+
+    /** The notes of the pattern playing (as Arp::Predict): Hold and Steps report each strike's chord root, Arp its
+     *  note. Changes nothing (the voice leading runs on a copy). */
+    bool Predict(double swing, const ArpParams& a, const ChordParams& c, const StepContext& cx, Harmony& scratch,
+                 int8_t* out) const
+    {
+        long long k;
+        if(!grid_.Last(k))
+            return false;
+        const bool   hold = c.rhythm == kChordHold, arp = c.rhythm == kChordArp;
+        const double d    = hold ? WindowBeats(cx) : kArpDivBeats[a.div];
+        const int    len  = hold ? 1 : a.length;
+        const float  den  = hold ? 1.f : a.density;
+        const int    rot  = hold ? 0 : a.rotate;
+        StepHit      h;
+        StepGrid::Locate(k, d, len, den, rot, cx.restart, cx.change, swing, h);
+        const long long k0   = PatternFirst(k, h.pos);
+        const bool      free = arp && a.seed <= 0 && (a.mode == kArpRandom || a.vary > 0.f);
+        // Arp counting from the chord change: the hits in it before the pattern's first step
+        const double wb    = WindowBeats(cx);
+        long long    win   = kNoWin;
+        int          count = 0;
+        if(arp && a.count != kCountSteps)
+        {
+            StepHit f;
+            StepGrid::Locate(k0, d, len, den, rot, cx.restart, cx.change, swing, f);
+            win = (long long)std::floor(f.start / wb);
+            for(long long q = k0 - 1;; q--)
+            {
+                StepHit b;
+                StepGrid::Locate(q, d, len, den, rot, cx.restart, cx.change, swing, b);
+                if((long long)std::floor(b.start / wb) != win)
+                    break;
+                count += b.play ? 1 : 0;
+            }
+        }
+        ChordGen g = *this; // the voice leading's memory, to run on
+        for(int i = 0; i < h.len; i++)
+        {
+            StepHit s;
+            StepGrid::Locate(k0 + i, d, len, den, rot, cx.restart, cx.change, swing, s);
+            const long long w = (long long)std::floor(s.start / wb);
+            if(w != win)
+            {
+                win   = w;
+                count = 0;
+            }
+            if(!StepGrid::Plays(i, s.hits, s.len, s.rot))
+            {
+                out[i] = (int8_t)kStepRest;
+                continue;
+            }
+            scratch.Update(cx.key, ChordAt(s.start, cx.prog, cx.change, cx.manualChord));
+            if(!arp)
+            {
+                out[i] = StepNote((float)(kMidiBase + 12 + cx.tonic + 12 * (a.octave + cx.masterOctave) + scratch.DegreeSemis(a.degree)));
+                continue;
+            }
+            if(free)
+            {
+                out[i] = (int8_t)kStepUnknown;
+                count++;
+                continue;
+            }
+            int       v[kPoly];
+            const int n = g.Voice(scratch, a.degree, c, v);
+            Rng       none; // never rolled: the seed is set, or nothing rolls
+            Dice      dice = {&none, a.seed, i};
+            int       j    = Turn(a, n, a.count == kCountSteps ? i : count, dice);
+            if(a.seed > 0 && dice.Uniform(kRollVary) < a.vary)
+                j = (int)(dice.Next(kRollVaryPick) % (uint32_t)n);
+            count++;
+            out[i] = StepNote((float)(ArpBase(a, cx, v, n) + v[(RootPlace(scratch, a.degree, v, n) + j) % n]));
+        }
+        return true;
     }
 
     /** The chord's notes in semitones above the tonic, ascending: stacked,
@@ -174,7 +254,7 @@ class ChordGen
                    Harmony& scratch, NoteEvent* out)
     {
         StepHit h;
-        if(!grid_.Begin(clk, kArpDivBeats[a.div], a.length, a.density, cx.restart, cx.change, false, h))
+        if(!grid_.Begin(clk, kArpDivBeats[a.div], a.length, a.density, a.rotate, cx.restart, cx.change, false, h))
             return 0;
         pos_ = h.pos;
         len_ = h.len;
@@ -191,38 +271,16 @@ class ChordGen
 
         scratch.Update(cx.key, ChordAt(h.start, cx.prog, cx.change, cx.manualChord));
         int       v[kPoly];
-        const int n = Voice(scratch, a.degree, c, v);
-        // the root's place in the voicing (its pitch class; voicings move notes by octaves only)
-        const int rpc  = ((scratch.DegreeSemis(a.degree) % 12) + 12) % 12;
-        int       root = 0;
-        for(int i = 0; i < n; i++)
-            if(((v[i] % 12) + 12) % 12 == rpc)
-            {
-                root = i;
-                break;
-            }
-        int j; // steps round the voicing from the root
-        switch(a.mode)
-        {
-            case kArpDown: j = (n - count_ % n) % n; break;
-            case kArpUpDown:
-            {
-                const int period = n > 1 ? 2 * n - 2 : 1;
-                const int m      = count_ % period;
-                j                = m < n ? m : period - m;
-                break;
-            }
-            case kArpRandom: j = (int)(rng_.Next() % (uint32_t)n); break;
-            default: j = count_ % n; break; // Up (and Off, Loop)
-        }
-        if(rng_.Uniform() < a.vary)
-            j = (int)(rng_.Next() % (uint32_t)n);
+        const int n    = Voice(scratch, a.degree, c, v);
+        Dice      dice = {&rng_, a.seed, h.pos};
+        int       j    = Turn(a, n, a.count == kCountSteps ? h.pos : count_, dice); // places round the voicing from the root
+        if(dice.Uniform(kRollVary) < a.vary)
+            j = (int)(dice.Next(kRollVaryPick) % (uint32_t)n);
         count_++;
-        const int vi = (root + j) % n;
+        const int vi = (RootPlace(scratch, a.degree, v, n) + j) % n;
 
-        int base = kMidiBase + 12 + cx.tonic + 12 * (a.octave + cx.masterOctave);
-        base += FoldShift(base + v[0], base + v[n - 1]); // the whole chord, so the arpeggio keeps the voicing
-        const int r   = rng_.Uniform() < a.ratchet ? 2 + (int)(rng_.Next() % 3u) : 1;
+        const int base = ArpBase(a, cx, v, n);
+        const int r    = Ratchets(dice, a.ratchet);
         // rounded, not cut: a step of a whole number of samples comes out a hair over or under it, depending on
         // where the block began, and a cut would make the ratchet's gap one sample shorter for some block sizes
         const int gap = (int)(h.stepSmp / (float)r + 0.5f);
@@ -237,6 +295,41 @@ class ChordGen
             out[i].gate  = c.letRing ? std::max(1, end - out[i].at) : gate;
         }
         return r;
+    }
+
+    /** RHYTHM Arp: places round the voicing from the root at count `cnt` (MODE, then SHIFT). */
+    static int Turn(const ArpParams& a, int n, int cnt, Dice& dice)
+    {
+        int j;
+        switch(a.mode)
+        {
+            case kArpDown: j = (n - cnt % n) % n; break;
+            case kArpUpDown:
+            {
+                const int period = n > 1 ? 2 * n - 2 : 1;
+                const int m      = cnt % period;
+                j                = m < n ? m : period - m;
+                break;
+            }
+            case kArpRandom: j = (int)(dice.Next(kRollNote) % (uint32_t)n); break;
+            default: j = cnt % n; break; // Up (and Off, Loop)
+        }
+        return a.shift > 0 ? (j + a.shift) % n : j;
+    }
+    /** The root's place in the voicing `v` (its pitch class; voicings move notes by octaves only). */
+    static int RootPlace(const Harmony& hm, int degree, const int* v, int n)
+    {
+        const int rpc = ((hm.DegreeSemis(degree) % 12) + 12) % 12;
+        for(int i = 0; i < n; i++)
+            if(((v[i] % 12) + 12) % 12 == rpc)
+                return i;
+        return 0;
+    }
+    /** RHYTHM Arp: the MIDI note the voicing's semitones sit on (the whole chord folded, so it keeps the voicing). */
+    static int ArpBase(const ArpParams& a, const StepContext& cx, const int* v, int n)
+    {
+        const int base = kMidiBase + 12 + cx.tonic + 12 * (a.octave + cx.masterOctave);
+        return base + FoldShift(base + v[0], base + v[n - 1]);
     }
 
     /** Inversion `inv` (the lowest `inv` notes up an octave), then the voicing, sorted. */

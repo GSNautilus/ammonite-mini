@@ -463,8 +463,8 @@ sa, sb = a.save(), b.save()
 check(ok and sa == sb, "a version 2 patch loads into the pool: the same chunk as the patch built on the pool directly"
       + ("" if sa == sb else f"\n{sa}\n---\n{sb}"))
 retired = [i for i in range(POOL_BASE) if 32 <= i < 42 or (i >= GLOBAL_IDS and 66 <= (i - GLOBAL_IDS) % SLOT_STRIDE < 90)]
-check(sa.splitlines()[0] == "ammonite-desktop 3" and not any(int(ln.split()[0]) in retired for ln in sa.splitlines()[1:]),
-      "saved again: version 3, no retired id in it")
+check(sa.splitlines()[0] == "ammonite-desktop 4" and not any(int(ln.split()[0]) in retired for ln in sa.splitlines()[1:]),
+      "saved again: version 4, no retired id in it")
 check(sum(a.get_id(lfo_id(l, "on")) for l in range(POOL_LFOS)) == 4 and a.get_id(lfo_id(0, "restart")) == 1 and a.get_id(lfo_id(2, "restart")) == 2
       and a.get_id(lfo_id(1, "restart")) == 0 and sum(a.get_id(route_id(r, "src")) > 0 for r in range(POOL_ROUTES)) == 6,
       "four LFOs (the unrouted one dropped; a channel's Restart Note -> that channel's notes, a global one free), six routes (the dead one dropped)")

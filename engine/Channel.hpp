@@ -10,6 +10,12 @@
  *  and Rhythm play the first, a chord one voice per note), or the drum
  *  voice (every event retriggers it).
  *
+ *  The telemetry also carries the notes of the pattern playing (stepNote),
+ *  foreseen from the generator's settings and the chords to come, worked out
+ *  again when a step begins or something they depend on changes; a note the
+ *  Free dice pick cannot be foreseen, so such a step shows the note it last
+ *  played.
+ *
  *  Mute is a mixer mute: a gain that takes the output to 0 in kMuteSec and
  *  back, while the generator and the voices keep running (the pattern keeps
  *  its place, a tail is cut, not left to ring). */
@@ -61,6 +67,8 @@ struct ChannelParams
     FxParams     fx; // the inserts
 };
 
+static_assert(kStepNotes == AMMO_STEPS, "the telemetry holds a whole pattern");
+
 class Channel
 {
   public:
@@ -90,6 +98,9 @@ class Channel
         lastGen_ = kGenOff;
         fresh_   = true;
         hitSeed_ = 0;
+        noteSig_  = 0;
+        std::memset(notes_, kStepRest, sizeof notes_);
+        std::memset(played_, kStepUnknown, sizeof played_);
         nPending_ = 0;
         used_     = 1;
         std::memset(mono_, 0, sizeof mono_);
@@ -152,6 +163,7 @@ class Channel
         const bool on = Active();
         if(on && (!wasOn_ || p_.gen != lastGen_))
         {
+            std::memset(played_, kStepUnknown, sizeof played_); // another pattern: nothing has played in it
             arp_.Rearm();
             chord_.Rearm();
             bass_.Rearm();
@@ -173,6 +185,10 @@ class Channel
         StepInfo(tf);
         if(!on)
         {
+            noteSig_ = 0;
+            std::memset(notes_, kStepRest, sizeof notes_);
+            std::memset(played_, kStepUnknown, sizeof played_);
+            std::memcpy(tf.stepNote, notes_, sizeof notes_);
             Release(0);
             if(!AnyActive())
             {
@@ -198,6 +214,7 @@ class Channel
         {
             Harmony           scratch = cond.harmony();
             const StepContext cx      = cond.stepContext(&scratch);
+            const int         ne0     = ne; // the generator's own events from here
             switch(p_.gen)
             {
                 case kGenArp:
@@ -250,7 +267,14 @@ class Channel
             if(drum)
                 used_ = 1; // one drum voice, whatever plays it
             StepInfo(tf);
+            if(ne > ne0 && ev[ne0].note >= 0.f && tf.step >= 0 && tf.step < kStepNotes)
+            {
+                played_[tf.step] = StepNote(ev[ne0].note); // a step's note as it played (a chord: its lowest)
+                noteSig_         = 0;                      // into stepNote where it was not foreseen
+            }
+            PatternNotes(cond, cx);
         }
+        std::memcpy(tf.stepNote, notes_, sizeof notes_);
         // events past this block wait for the next
         int now = 0;
         for(int i = 0; i < ne; i++)
@@ -525,6 +549,69 @@ class Channel
                 break;
         }
     }
+    /** The notes of the pattern playing into notes_ (the generator's Predict), when a step has begun or anything
+     *  they depend on changed since the last time: a signature of all of it. */
+    void PatternNotes(const Conductor& cond, const StepContext& cx)
+    {
+        long long k   = 0;
+        bool      any = false;
+        switch(p_.gen)
+        {
+            case kGenArp: any = arp_.LastStep(k); break;
+            case kGenChord: any = chord_.LastStep(k); break;
+            case kGenBass: any = bass_.LastStep(k); break;
+            case kGenRhythm: any = rhythm_.LastStep(k); break;
+            default: break;
+        }
+        const ArpParams& a     = p_.arp;
+        const double     swing = cond.clock().swing;
+        uint32_t         h     = 2166136261u; // FNV-1a
+        const auto       mix   = [&h](uint32_t x) {
+            for(int b = 0; b < 4; b++, x >>= 8)
+                h = (h ^ (x & 0xFFu)) * 16777619u;
+        };
+        float vary = a.vary > 0.f ? 1.f : 0.f; // only whether it varies: the note is then unknown, or seeded
+        if(a.seed > 0)
+            vary = a.vary;
+        const int ints[] = {any ? 1 : 0, (int)k, (int)(k >> 32), p_.gen, a.mode, a.pool, a.range, a.div, a.length,
+                            a.degree, a.octave, a.rotate, a.shift, a.count, a.seed, p_.chord.notes, p_.chord.voicing,
+                            p_.chord.rhythm, p_.chord.smooth ? 1 : 0, p_.bassPattern, p_.rhythm.pitch, cx.key, cx.tonic,
+                            cx.change, cx.manualChord, cx.restart, cx.masterOctave, cx.prog.n};
+        for(int x : ints)
+            mix((uint32_t)x);
+        for(int i = 0; i < cx.prog.n; i++)
+            mix((uint32_t)cx.prog.deg[i]);
+        uint32_t fb;
+        const float fs[] = {a.density, vary, a.seed > 0 ? p_.rhythm.chance : 1.f, (float)swing};
+        for(float f : fs)
+        {
+            std::memcpy(&fb, &f, 4);
+            mix(fb);
+        }
+        h |= 1u; // never 0: 0 is "not worked out"
+        if(h == noteSig_)
+            return;
+        noteSig_ = h;
+        std::memset(notes_, kStepRest, sizeof notes_);
+        if(!any)
+            return;
+        Harmony scratch = cond.harmony();
+        switch(p_.gen)
+        {
+            case kGenArp:
+                if(a.mode != kArpOff)
+                    arp_.Predict(swing, a, cx, scratch, notes_);
+                break;
+            case kGenChord: chord_.Predict(swing, a, p_.chord, cx, scratch, notes_); break;
+            case kGenBass: bass_.Predict(swing, a, p_.bassPattern, cx, scratch, notes_); break;
+            case kGenRhythm: rhythm_.Predict(swing, a, p_.rhythm, cx, scratch, notes_); break;
+            default: break;
+        }
+        for(int i = 0; i < kStepNotes; i++)
+            if(notes_[i] == kStepUnknown)
+                notes_[i] = played_[i]; // not foreseen: what it last played (kStepUnknown until it has)
+    }
+
     /** Release voices from `from` up (and drop their pending notes). */
     void Release(int from)
     {
@@ -579,6 +666,9 @@ class Channel
     NoteEvent     pending_[kMaxEvents];
     int           nPending_ = 0;
     uint32_t      hitSeed_ = 0;
+    int8_t        notes_[kStepNotes];  // the pattern's notes (PatternNotes), for the telemetry
+    int8_t        played_[kStepNotes]; // the note each step last played (kStepUnknown: none since the pattern began)
+    uint32_t      noteSig_ = 0;       // what they were worked out from (0: not yet)
 };
 
 } // namespace ammo

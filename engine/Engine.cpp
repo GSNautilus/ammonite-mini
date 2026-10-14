@@ -49,7 +49,7 @@ bool IsRetiredId(int id)
     int slot, p;
     if(IsGlobalId(id))
         return id >= gLfo1Shape && id < kNumGlobalParams;
-    return IsSlotId(id, slot, p) && p >= cLfo1Shape && p < kNumSlotParams;
+    return IsSlotId(id, slot, p) && p >= kFirstRetiredSlotParam && p < kEndRetiredSlotParam;
 }
 
 /** A version 2 chunk's modulation into the pool (docs/PHASE4_BREADTH.md section 8.7): every live route becomes a
@@ -121,6 +121,15 @@ void ConvertV2(float* v)
     for(int id = 0; id < kNumIds; id++)
         if(IsRetiredId(id))
             v[id] = ParamInfo(id).def;
+}
+
+/** A chunk before version 4: ROTATE was the Rhythm generator's alone, so a value another generator's channel kept
+ *  (set while it was a Rhythm) goes back to 0, and the channel plays as it did (docs/PHASE4_BREADTH.md section 9). */
+void ConvertV3(float* v)
+{
+    for(int s = 0; s < kSlots; s++)
+        if((int)std::lround(v[SlotId(s, cGen)]) != kGenRhythm)
+            v[SlotId(s, cRhythmRotate)] = 0.f;
 }
 
 void AppendLine(std::string& out, int id, float v)
@@ -412,6 +421,10 @@ void Engine::SubBlock(float* outL, float* outR, int n, const HostClock* clock, b
         p.arp.density   = v(cArpDensity);
         p.arp.vary      = v(cArpVary);
         p.arp.ratchet   = v(cArpRatchet);
+        p.arp.rotate    = I(v(cRhythmRotate));
+        p.arp.shift     = I(v(cNoteShift));
+        p.arp.count     = I(v(cNoteCount));
+        p.arp.seed      = I(v(cSeed));
         VoiceParams& vp = p.voice;
         vp.shape        = v(cShape);
         vp.detuneCents  = v(cDetune);
@@ -439,7 +452,6 @@ void Engine::SubBlock(float* outL, float* outR, int n, const HostClock* clock, b
         p.chord.strum   = v(cChordStrum);
         p.chord.letRing = v(cChordLetRing) >= 0.5f;
         p.bassPattern   = I(v(cBassPattern));
-        p.rhythm.rotate = I(v(cRhythmRotate));
         p.rhythm.chance = v(cRhythmChance);
         p.rhythm.pitch  = I(v(cRhythmPitch));
         p.drum.model    = I(v(cDrumModel));
@@ -540,8 +552,9 @@ void Engine::MasterBus(float* outL, float* outR, int n, AmmoFrame& f, float glue
 
 std::string Engine::Save() const
 {
-    // 3: the modulation pool (2: the arp divisions gained 4/1 2/1 and the dotted ones)
-    std::string out = "ammonite-desktop 3\n";
+    // 4: ROTATE for every generator, SHIFT, COUNT, SEED (3: the modulation pool; 2: the arp divisions gained 4/1
+    // 2/1 and the dotted ones)
+    std::string out = "ammonite-desktop 4\n";
     for(int id = 0; id < kNumIds; id++)
     {
         if(!IsSaved(id))
@@ -555,7 +568,7 @@ std::string Engine::Save() const
 
 std::string Engine::RoutesText(const float* values)
 {
-    std::string out = "ammonite-desktop 3\n";
+    std::string out = "ammonite-desktop 4\n";
     for(int id = kRouteBase; id < kPoolEnd; id++)
         if(std::fabs(values[id] - ParamInfo(id).def) >= 1e-7f)
             AppendLine(out, id, values[id]);
@@ -631,6 +644,8 @@ bool Engine::ParseState(const char* text, size_t len, float* values)
     }
     if(version < 3)
         ConvertV2(values);
+    if(version < 4)
+        ConvertV3(values);
     return true;
 }
 

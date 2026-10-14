@@ -96,7 +96,7 @@
     pitch_amt: ['bipenv', 'semi'], pitch_d: ['env', 'pdec'], glide: ['lfo', 'glide'],
     tempo: ['tempo', 'bpm'], swing: ['swing', 'pct'], root: ['note', 'note'], octave: ['range', 'octs'], volume: ['level', 'pct'],
     macro1: ['tail', 'pct'], macro2: ['lfo', 'pct'], macro3: ['tail', 'pct'], macro4: ['drive', 'pct'],
-    rhy_rotate: ['range', 'int'], rhy_chance: ['chance', 'pct'],
+    rhy_rotate: ['range', 'int'], rhy_chance: ['chance', 'pct'], note_shift: ['range', 'int'], seed: ['range', 'name'],
     fx_drive: ['drive', 'pct'], fx_tone: ['bipenv', 'bip'], cho_rate: ['lfo', 'chz'], cho_depth: ['detune', 'pct'], cho_mix: ['level', 'pct'],
     dly_fb: ['env', 'pct'], dly_damp: ['level', 'dhz'], dly_mix: ['level', 'pct'], rev_send: ['level', 'pct'], duck_amt: ['env', 'pct'],
     rev_size: ['len', 'pct'], rev_decay: ['env', 'sec'], rev_damp: ['level', 'rhz'], rev_pre: ['attack', 'ms'], rev_width: ['density', 'pct'], rev_return: ['level', 'pct'], glue: ['drive', 'pct'], ceiling: ['level', 'db'],
@@ -132,7 +132,7 @@
   var CH = {};
   // wave: one period of the output, scaled to its peak (-1..1); ws: that peak (the channel's level in it)
   for (var s0 = 0; s0 < SLOTS; s0++) CH[s0] = { hue: null, sat: 92, amp: 0, note: 57, pc: 9, bytes: new Uint8Array(128), wave: new Float32Array(128), ws: 0, active: 0, muted: 0, hit: 0, hitSeed: 0, step: 0, len: 0, rms: 0, peak: 0, glow: 0,
-                                                 notes: [], vnotes: [], dkAcc: 0, dkHist: new Float32Array(240), dkPos: 0 };
+                                                 notes: [], vnotes: [], sn: null, dkAcc: 0, dkHist: new Float32Array(240), dkPos: 0 };
 
   /* The stage's own controls: parameters of the page, not the engine. They live in the same table (ids from
      VBASE up, past the engine's 2112) so knobs, chips, drags and resets work on them unchanged, but they never
@@ -355,7 +355,7 @@
         var c = CH[s], fc = f.ch[s];
         c.hit = 0;
         if (!fc) { c.active = 0; c.muted = 0; c.amp *= 0.9; continue; }
-        c.active = fc.a; c.muted = fc.m ? 1 : 0; c.note = fc.n; c.pc = fc.pc; c.amp = fc.e; c.rms = fc.r; c.peak = fc.k; c.hit = fc.h; c.hitSeed = fc.sd; c.step = fc.st; c.len = fc.ln; c.vnotes = fc.v || [];
+        c.active = fc.a; c.muted = fc.m ? 1 : 0; c.note = fc.n; c.pc = fc.pc; c.amp = fc.e; c.rms = fc.r; c.peak = fc.k; c.hit = fc.h; c.hitSeed = fc.sd; c.step = fc.st; c.len = fc.ln; c.vnotes = fc.v || []; c.sn = fc.sn || null;
         c.ws = fc.ws || 0;
         if (fc.w && fc.w.length) {
           var bin = atob(fc.w), m = Math.min(bin.length, 128);
@@ -443,6 +443,16 @@
   function vibrato(s) { return s >= 0 && Math.round(sval(s, 'cho_mode')) === 2; } // all wet: MIX does nothing
   function chorusOn(s) { return sval(s, 'cho_on') >= 0.5 && (vibrato(s) || sval(s, 'cho_mix') > 0); }
   /** A channel's row subtitle: what its generator plays, in a line. */
+  /** The folded PATTERN line's tail: Rotate, Shift, Count, Seed where they are not the defaults (and apply). */
+  function notesSum(s) {
+    var gen = genOf(s), arpish = gen === GEN_ARP || (gen === GEN_CHORD && chordArp(s)), out = '';
+    var rot = Math.round(sval(s, 'rhy_rotate')), sh = Math.round(sval(s, 'note_shift')), cnt = Math.round(sval(s, 'note_count')), sd = Math.round(sval(s, 'seed'));
+    if (rot && gen !== GEN_RHYTHM) out += ' · rotate ' + rot;
+    if (arpish && sh) out += ' · shift ' + sh;
+    if (arpish && cnt && cnt !== (gen === GEN_CHORD ? 2 : 1)) out += ' · count ' + (cnt === 2 ? 'hits' : 'steps');
+    if (sd && !(gen === GEN_CHORD && !chordArp(s))) out += ' · seed ' + sd;
+    return out;
+  }
   function slotSub(s) {
     var div = Knobs.fmt('div', sval(s, 'arp_div'));
     switch (genOf(s)) {
@@ -735,6 +745,26 @@
         'switching this on shuts everything but the last one opened">One at a time</button></div></div>';
   }
   /** A section's body: its view on the left, its knobs (up to six) on the right. */
+  /** PATTERN's second row, under the first's knobs (docs/PHASE4_BREADTH.md section 9): which notes the pattern plays.
+      `cells` are knobs (Rotate, Shift, Seed: the generator's); `count` the COUNT chips' Auto (1 Steps, 2 Hits) or 0
+      for none. */
+  function noteRow(s, cells, count) {
+    var out = '<div class="srow noterow"><div class="notel">' + (count ? countChips(s, count) : '') + '</div><div class="knobs">' + cells.join('');
+    for (var i = cells.length; i < 6; i++) out += '<div></div>';
+    return out + '</div></div>';
+  }
+  /** COUNT as two chips, Steps and Hits; the one the generator's Auto plays as stands for Auto (it sets 0, the
+      default, and lights at 0), the other sets its own value (an explicit value lights its chip too: data-same). */
+  function countChips(s, auto) {
+    var id = sid(s, 'note_count'), v = Math.round(val(id)), out = '<div class="chips" data-chips="' + id + '"><span class="lab">COUNT</span>';
+    [[1, 'Steps', 'The note follows the step: Rotate moves the rhythm and changes the notes'],
+     [2, 'Hits', 'Each hit takes the next note: the run stays whole at any density, Rotate moves only the rhythm']].forEach(function (c) {
+      var dv = c[0] === auto ? 0 : c[0];
+      out += '<button class="chip" data-id="' + id + '" data-val="' + dv + '" data-same="' + c[0] + '" title="' + esc(c[2]) + '" aria-pressed="' +
+        (v === dv || v === c[0] ? 'true' : 'false') + '">' + c[1] + '</button>';
+    });
+    return out + '</div>';
+  }
   function srow(view, slot, cells, attrs) {
     var out = '<div class="srow"><canvas class="viz ' + view + '" data-slot="' + slot + '"' + (attrs || '') + '></canvas><div class="knobs">' + cells.join('');
     for (var i = cells.length; i < 6; i++) out += '<div></div>';
@@ -908,7 +938,8 @@
     var body = '';
     var rhythm = [k('arp_div', 'Division'), k('arp_len', 'Length'), k('arp_density', 'Density'), k('arp_gate', 'Gate'), k('arp_vary', 'Vary'), k('arp_ratchet', 'Ratchet')];
     if (gen === GEN_ARP) {
-      body += csec(s, 'pat', 'PATTERN', '<div class="chipline">' + chipRow(sid(s, 'arp_mode'), 'MODE') + chipRow(sid(s, 'arp_pool'), 'POOL') + '</div>' + srow('stepview', s, rhythm)) +
+      body += csec(s, 'pat', 'PATTERN', '<div class="chipline">' + chipRow(sid(s, 'arp_mode'), 'MODE') + chipRow(sid(s, 'arp_pool'), 'POOL') + '</div>' + srow('stepview', s, rhythm) +
+          noteRow(s, [k('rhy_rotate', 'Rotate'), k('note_shift', 'Shift'), k('seed', 'Seed')], 1)) +
         csec(s, 'pitch', 'PITCH', srow('rollview', s, [k('degree', 'Degree'), k('oct', 'Octave'), k('arp_range', 'Range'), k('tune', 'Fine')]));
     } else if (gen === GEN_CHORD) {
       // Arp: the arp's patterns (Off and Loop play as Up, so not offered) and Let ring; no strum
@@ -917,14 +948,16 @@
           '<div class="chipline">' + chipRow(sid(s, 'chord_lead'), 'LEADING') + chipRow(sid(s, 'chord_rhythm'), 'RHYTHM') + '</div>' +
           (arp ? '<div class="chipline">' + chipRow(sid(s, 'arp_mode'), 'MODE', 2) + chipRow(sid(s, 'chord_ring'), 'LET RING') + '</div>' : '') +
           srow('chordview', s, [k('degree', 'Degree'), k('oct', 'Octave'), k('tune', 'Fine')].concat(arp ? [] : [k('chord_strum', 'Strum')])));
-      if (!holds(s)) body += csec(s, 'pat', 'PATTERN', srow('stepview', s, arp ? rhythm : rhythm.slice(0, 4)));
+      if (!holds(s)) body += csec(s, 'pat', 'PATTERN', srow('stepview', s, arp ? rhythm : rhythm.slice(0, 4)) +
+          noteRow(s, arp ? [k('rhy_rotate', 'Rotate'), k('note_shift', 'Shift'), k('seed', 'Seed')] : [k('rhy_rotate', 'Rotate')], arp ? 2 : 0));
     } else if (gen === GEN_RHYTHM) {
       body += csec(s, 'pat', 'PATTERN', srow('stepview', s, [k('arp_div', 'Division'), k('arp_len', 'Length'), k('arp_density', 'Hits'),
-          k('rhy_rotate', 'Rotate'), k('rhy_chance', 'Chance'), k('arp_ratchet', 'Roll')])) +
+          k('rhy_rotate', 'Rotate'), k('rhy_chance', 'Chance'), k('arp_ratchet', 'Roll')]) + noteRow(s, ['<div></div>', '<div></div>', '<div></div>', '<div></div>', k('seed', 'Seed')], 0)) +
         csec(s, 'pitch', 'FEEL', '<div class="chipline">' + chipRow(sid(s, 'rhy_pitch'), 'PITCH') + '</div>' +
           srow('rollview', s, [k('arp_vary', 'Humanize'), k('arp_gate', 'Gate'), k('oct', 'Octave'), k('degree', 'Degree'), k('tune', 'Fine')]));
     } else if (gen === GEN_BASS) {
-      body += csec(s, 'pat', 'PATTERN', '<div class="chipline">' + chipRow(sid(s, 'bass_pattern'), 'PATTERN') + '</div>' + srow('stepview', s, rhythm)) +
+      body += csec(s, 'pat', 'PATTERN', '<div class="chipline">' + chipRow(sid(s, 'bass_pattern'), 'PATTERN') + '</div>' + srow('stepview', s, rhythm) +
+          noteRow(s, [k('rhy_rotate', 'Rotate'), '<div></div>', k('seed', 'Seed')], 0)) +
         csec(s, 'pitch', 'PITCH', srow('rollview', s, [k('degree', 'Degree'), k('oct', 'Octave'), k('tune', 'Fine')]));
     }
     body = cgrp(s, 'gen', 'GENERATOR', chipRow(sid(s, 'gen'), ''), body);
@@ -1264,7 +1297,8 @@
     });
     // chips and toggles; the camera's view chips light while the camera is at that view (a drag leaves it)
     document.querySelectorAll('button.chip[data-id]').forEach(function (b) {
-      var want = Math.round(val(+b.getAttribute('data-id'))) === +b.getAttribute('data-val') ? 'true' : 'false';
+      var cv = Math.round(val(+b.getAttribute('data-id'))), same = b.getAttribute('data-same');
+      var want = cv === +b.getAttribute('data-val') || (same != null && cv === +same) ? 'true' : 'false';
       if (b.getAttribute('aria-pressed') !== want) b.setAttribute('aria-pressed', want);
     });
     var vnow = camViewNow();
@@ -1298,8 +1332,8 @@
     var SUMS = {
       pat: function (s) {
         if (genOf(s) === GEN_RHYTHM) return hitsOf(s) + ' hits · ' + Knobs.fmt('div', sval(s, 'arp_div')) + (Math.round(sval(s, 'rhy_rotate')) ? ' · rotate ' + Math.round(sval(s, 'rhy_rotate')) : '') +
-          (sval(s, 'rhy_chance') < 0.99 ? ' · chance ' + f(s, 'rhy_chance', 'pct') : '');
-        return (genOf(s) === GEN_CHORD ? Knobs.fmt('div', sval(s, 'arp_div')) : slotSub(s).toLowerCase()) + ' · ' + Math.round(sval(s, 'arp_len')) + ' steps · density ' + f(s, 'arp_density', 'pct'); },
+          (sval(s, 'rhy_chance') < 0.99 ? ' · chance ' + f(s, 'rhy_chance', 'pct') : '') + notesSum(s);
+        return (genOf(s) === GEN_CHORD ? Knobs.fmt('div', sval(s, 'arp_div')) : slotSub(s).toLowerCase()) + ' · ' + Math.round(sval(s, 'arp_len')) + ' steps · density ' + f(s, 'arp_density', 'pct') + notesSum(s); },
       drum: function (s) { return (nameOf(sid(s, 'drum_model')) + ' · tune ' + f(s, 'drum_tune', 'sint') + ' · decay ' + f(s, 'drum_decay', 'pct') +
                                   ' · tone ' + f(s, 'drum_tone', 'pct')).toLowerCase(); },
       chord: function (s) { return (nameOf(sid(s, 'chord_notes')) + ' · ' + nameOf(sid(s, 'chord_voicing')) + ' · ' + nameOf(sid(s, 'chord_lead')) + ' · ' + nameOf(sid(s, 'chord_rhythm'))).toLowerCase() +
@@ -1876,9 +1910,12 @@
     var g = fit2d(cv); if (!g) return;
     var ctx = g.ctx, w = g.w, h = g.h, c = CH[slot];
     var len = Math.max(1, Math.round(sval(slot, 'arp_len'))), hits = Math.floor(sval(slot, 'arp_density') * len + 0.5), hue = hueOfSlot(slot), gate = sval(slot, 'arp_gate');
-    var rot = genOf(slot) === GEN_RHYTHM ? Math.round(sval(slot, 'rhy_rotate')) % len : 0;
+    var rot = Math.round(sval(slot, 'rhy_rotate')) % len; // every generator's ROTATE
+    // the notes the engine foresees (stepNote: -1 a rest, -2 not known yet); none for a drum's fixed pitch
+    var sn = c.active && c.sn && c.sn.length === len && !(genOf(slot) === GEN_RHYTHM && Math.round(sval(slot, 'rhy_pitch')) === 0) ? c.sn : null;
     pane(ctx, w, h);
     var x0 = 10, x1 = w - 10, top = 24, bot = h - 10, pad = 3, sw = (x1 - x0 - pad * (len - 1)) / len, cur = c.active ? c.step % len : -1;
+    var nfs = Math.max(8, Math.min(13, Math.floor(sw * 0.42)));
     for (var i = 0; i < len; i++) {
       var on = (((i - rot + len) % len) * hits) % len < hits, x = x0 + i * (sw + pad), now = i === cur;
       ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, top, sw, bot - top, 4); else ctx.rect(x, top, sw, bot - top);
@@ -1889,6 +1926,11 @@
       ctx.beginPath(); if (ctx.roundRect) ctx.roundRect(x, top, gw, bot - top, 4); else ctx.rect(x, top, gw, bot - top);
       ctx.fillStyle = Knobs.hsla(hue, 85, now ? 66 : 55, now ? 0.9 : 0.42); ctx.fill();
       if (now) { ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.shadowBlur = 14; ctx.shadowColor = Knobs.hsla(hue, 90, 60, 0.9); ctx.fill(); ctx.restore(); }
+      if (sn && sn[i] !== -1) {
+        var nn = sn[i] >= 0 ? Knobs.NOTES[sn[i] % 12] : '?';
+        Knobs.text(ctx, nn, x + sw / 2, bot - nfs * 0.75, '600 ' + nfs + 'px ' + Knobs.SANS,
+          sn[i] < 0 ? 'rgba(236,236,240,0.35)' : now ? '#141414' : Knobs.hsla(sn[i] >= 0 ? Knobs.hueOf(sn[i] % 12) : hue, 80, 80, 0.95), 'center');
+      }
     }
     caption(ctx, 'STEPS · ' + (cur >= 0 ? (cur + 1) + '/' : '') + len + ' · ' + hits + ' hits');
   }
