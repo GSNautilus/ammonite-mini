@@ -168,6 +168,50 @@ engine and the page this started from.
     4. The presets by ear, the ten of them: their LFOs and macro routes
        are new to the tablet (Slow tide's three LFOs, Dub echoes, Evening
        band, Night groove, Slow bloom).
+- 2026-10-13, **the port, step 2: the page is shared** (`ammonite`
+  `PHASE4_BREADTH.md` 8.8, decision 2, "As built"). Done without the
+  tablet.
+  - `ammonite` `45ac1c0`: desktop's page gains a Mini mode, switched on by
+    `window.AMMO_MINI = true` in Mini's own `index.html` and `dev.html`
+    (with `<html class="mini">`, no stage canvas, no `shells.js`). It does
+    everything phase 0 did here (its list above), plus desktop's features
+    since: the Modulation tab and assign mode (tap), tags and their menus
+    by long press, the CPU meter (its peak from the bridge's `cpk`), the
+    pin bar as a drawer along the bottom of the screen (the top bar's
+    button or B; pins by long press; its pins show rings, not tags), the
+    Custom progression's editor. The output picker is hidden. Desktop's
+    page is unchanged (checked headless, element by element).
+  - `web/`: `app.js`, `app.css`, `knobs.js`, `fake-engine.js` are copies of
+    `ammonite`'s `desktop/plugin/web`, made by `mini.ps1 web`, which records
+    the commit and their hashes in `web/SHARED.txt`; `mini.ps1 test` fails
+    if a copy is edited here. Only `index.html` and `dev.html` are Mini's.
+    The page is never changed here again: change it in `ammonite`, commit,
+    `mini.ps1 web` (README, "The page is shared").
+  - Checked: `mini.ps1 test` passes (engine, bridge, the shared page);
+    `mini.ps1 apk` builds, its assets the copies byte for byte (not
+    installed). Headless Edge at the tablet's 1333x800 CSS px (scale 1.5,
+    2000x1200 shots): every tab, a channel open, the Modulation tab, assign
+    with a tag, a tag's menu, the pin drawer and its menu; a synthetic-event
+    run of the touch rules (dead zone, double-tap reset and none after a
+    drag, second-finger fine at 1/4 whose tap clicks nothing, long press
+    on a knob and on a tag, none with a second finger down, every target
+    at least 48 CSS px on three tabs, the page line's round trip, the CPU
+    peak from `cpk`): 31 of 31.
+  - **Waits for the tablet** (with the port's step 1 list above):
+    1. Touch feel on the glass: the dead zone, double-tap, the second
+       finger, long presses (500 ms) on knobs, faders and tags; whether
+       Android's own long-press (a `contextmenu`, text selection) gets in
+       first; the S Pen too.
+    2. The layout on the real screen: the WebView's CSS size (1333x800
+       expected, so 0.89), the status and navigation bars, the pin drawer's
+       height, the Modulation tab's two columns, chips wrapping.
+    3. The tag menu's amount box: a tap brings the keyboard; that it does
+       not cover the menu, and Enter / back close it.
+    4. Performance with the page running: frame rate with the Modulation
+       tab's LFO views and the drawer's knobs drawing (F2: the stats line),
+       the callback's load and xruns with 16 channels and the whole pool.
+    5. Save / Open with the new page line (names, pins, desktop's looks kept),
+       a desktop -> tablet -> desktop round trip (phase 3).
 
 ## 1. What it is
 
@@ -184,8 +228,9 @@ scaling).
 
 - **A separate repo.** A snapshot of `ammonite` at `efc533a` (branch
   `desktop`). Since 2026-10-13 the engine is a plain copy of desktop's
-  (README), refreshed by copying it again; the page follows when it is
-  shared (section 6, "LFOs and modulation"). Local only for now: no GitHub.
+  (README), refreshed by copying it again; since 2026-10-13 the page is
+  too (`ammonite`'s `desktop/plugin/web` in its Mini mode, copied by
+  `mini.ps1 web`, section 0). Local only for now: no GitHub.
 - **A native app:** Kotlin, an Android WebView with the page in it, the engine
   through the NDK and JNI, and Oboe (AAudio) for audio. It has the same shape
   as the desktop: C++ engine, web page, one-line string messages.
@@ -248,12 +293,13 @@ Repo layout when built:
 ```
 engine/          desktop's engine, copied whole (README names the commit)
 bridge/          Bridge.hpp / Bridge.cpp
-web/             the page (index.html, app.js, app.css, knobs.js, dev.html, fake-engine.js)
+web/             the page: index.html, dev.html (Mini's: they set AMMO_MINI); app.js, app.css, knobs.js,
+                 fake-engine.js copied from ammonite (mini.ps1 web, web/SHARED.txt)
 android/         Gradle project: app/ (Kotlin), app/src/main/cpp/CMakeLists.txt -> ../../engine, ../../bridge
 tests/engine/    the desktop's engine tests, copied with it
 tests/bridge/    the bridge, headless (ctypes, as the engine tests)
 CMakeLists.txt   Windows: the engine + bridge DLL for the tests (MSVC + Ninja, as desktop)
-mini.ps1         build | test | apk | install | run | serve | shot | log
+mini.ps1         build | test | web | apk | install | run | serve | shot | log
 ```
 
 ## 4. Phases
@@ -396,7 +442,8 @@ heard without a felt delay, and presets switch cleanly.
   for the tablet steps, section 0; the ARM64 change went upstream instead
   of being re-applied); (2) **the page is shared**:
   one page in `ammonite` with a Mini mode doing what phase 0 did here, which
-  this repo takes as it is (no more porting page features by hand);
+  this repo takes as it is (no more porting page features by hand;
+  **done 2026-10-13**, section 0);
   (3) **the scope is full screen**: a Scope view from the top bar, the
   panel sliding away, the pinned knobs under it when the pin drawer is
   open; its GPU path brought back without the 3D form, stage FX measured

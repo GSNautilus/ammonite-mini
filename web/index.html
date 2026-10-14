@@ -1,9 +1,12 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="mini">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <title>Ammonite Mini</title>
+<!-- Mini's own: the shared page (app.js, app.css, knobs.js from ammonite's desktop/plugin/web, SHARED.txt) in Mini
+     mode, set before any script runs; no stage canvas, no shells.js. The host is the app's bridge (window.ammoHost). -->
+<script>window.AMMO_MINI = true;</script>
 <link rel="stylesheet" href="app.css">
 </head>
 <body>

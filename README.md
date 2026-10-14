@@ -1,8 +1,8 @@
 # Ammonite Mini
 
 Ammonite Desktop on an Android tablet (target: Samsung Galaxy Tab S6 Lite
-2024, SM-P620): the same engine and the same control panel, with no 3D
-stage, laid out for touch.
+2024, SM-P620): the same engine and the same page, with no 3D stage, laid
+out for touch (the page's Mini mode).
 
 ## Where it came from
 
@@ -12,7 +12,7 @@ The `ammonite` repo, branch `desktop`:
 |---|---|---|
 | `engine/` | `desktop/engine/` | `69f0980` (2026-10-13), identical |
 | `tests/engine/` | `desktop/test/tests/engine/` | `69f0980`, identical |
-| `web/` | `desktop/plugin/web/` | `efc533a` (2026-10-06), adapted for touch (phase 0) |
+| `web/` | `desktop/plugin/web/` | `45ac1c0` (2026-10-13): `app.js`, `app.css`, `knobs.js`, `fake-engine.js` identical (`web/SHARED.txt`); `index.html`, `dev.html` Mini's own |
 | `bridge/` | from `desktop/plugin/AmmoniteUI.cpp` | `69f0980` |
 
 **The engine is identical to `ammonite`'s `desktop/engine` at `69f0980`**,
@@ -23,19 +23,36 @@ engine change (2026-10-07: `ScopedFlushToZero` on ARM64, FPCR.FZ) now lives
 upstream, so there is nothing to re-apply: to update, copy both folders
 again and run `mini.ps1 test`. Engine fixes are made in `ammonite`.
 
-The page is still the `efc533a` one: it ignores what it does not know (the
-pool, the custom steps, the new telemetry). It is replaced by the shared
-page (one page in `ammonite` with a Mini mode: `docs/MINI_PLAN.md`, "LFOs
-and modulation").
+**The page is shared:** `ammonite`'s `desktop/plugin/web` is the one page
+of both apps. Mini's `index.html` and `dev.html` set `window.AMMO_MINI =
+true` before any script loads, which puts the page in its Mini mode: no
+stage, the panel filling the screen at 0.89, touch rules (48 CSS px
+targets, a dead zone, double-tap reset, a second finger for fine drags,
+long presses for menus), Sync and the output picker hidden, the pin bar as
+a drawer along the bottom (`ammonite`'s `docs/PHASE4_BREADTH.md` 8.8, "As
+built"). Everything else in `web/` is a copy, never edited here.
+
+To update the page (after a change in `ammonite`, committed there):
+
+```powershell
+.\mini.ps1 web    # copies the shared files from ..mmonite, records the commit in web\SHARED.txt
+.\mini.ps1 test   # the engine and bridge tests, and the copies checked against web\SHARED.txt
+.\mini.ps1 apk    # the APK with the new page (Gradle packages web\)
+```
+
+A page change is made in `ammonite` (desktop mode must not change), never
+in `web/` here: `mini.ps1 test` fails on a copy that differs from what
+`SHARED.txt` recorded.
 
 ## Status
 
 The app plays on the tablet: the page full screen in a WebView, driving the
 engine through the bridge (`bridge/`), sound through Oboe (phases 0-2).
 Patch files and recordings are wired but not finished (phase 3). Desktop's
-engine with the modulation pool (2026-10-13) passes its tests on Windows
-and compiles for the tablet, but has not been on it yet. The build plan and
-its status: `docs/MINI_PLAN.md`.
+engine with the modulation pool and the shared page with its Modulation
+tab, pin drawer and CPU meter (2026-10-13) pass their tests on Windows and
+in headless Edge at the tablet's size, and build into the APK, but have not
+been on the tablet yet. The build plan and its status: `docs/MINI_PLAN.md`.
 
 ## Building and testing (Windows)
 

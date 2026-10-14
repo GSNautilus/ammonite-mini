@@ -6,7 +6,14 @@
    Knobs.draw(canvas, spec, st): spec = {kind, fmt, min, max, steps, def}
    st = {v (real value), hue, sat, amp, dragging, hover, time, beat, wave
    (Float32Array or null), ch (the channel's values for filter faces),
-   step, len}. Colors: Knobs.hsla, Knobs.hslRgb, Knobs.hueOf. */
+   step, len, mod ({rings: [{r, lo, hi, at, h, s, l}], live, hot}: one ring
+   per route on it in its source's colour, its reach lo..hi and where that
+   source has it now (at, -1 if not known), 0..1 of the range; live where
+   the engine has it with every route added (-1 if not known); hot the
+   route whose tag is hovered or dragged), assign (1: the source being
+   assigned can take it, 2: it already does), assignTone ({h, s, l}: that
+   source's colour), text (in place of the value), textCol (its colour)}.
+   Colors: Knobs.hsla, Knobs.hslRgb, Knobs.hueOf. */
 var Knobs = (function () {
   'use strict';
   var TAU = Math.PI * 2;
@@ -70,6 +77,11 @@ var Knobs = (function () {
       case 'pdec': s = 0.005 * Math.pow(2, 7.64 * x); return s >= 1 ? s.toFixed(2) + ' s' : Math.round(s * 1000) + ' ms';
       case 'glide': s = x * x; return s < 0.005 ? 'off' : Math.round(s * 1000) + ' ms';
       case 'cents': return Math.round(v) + ' ct';
+      case 'scents': s = Math.round(v); return (s > 0 ? '+' : '') + s + ' ct';
+      // the LFOs (engine/Mod.hpp): Free RATE 0.02 .. 20 Hz, PHASE as an angle, a stepped value by its name
+      case 'lhz': s = 0.02 * Math.pow(2, 9.966 * x); return (s < 0.1 ? s.toFixed(3) : s < 1 ? s.toFixed(2) : s.toFixed(1)) + ' Hz';
+      case 'deg360': return Math.round(x * 360) + '°';
+      case 'name': return spec && spec.names ? spec.names[clamp(Math.round(v) - spec.min, 0, spec.names.length - 1)] : String(Math.round(v));
       case 'bpm': return Math.round(v) + ' BPM';
       case 'semi': s = Math.round(v * 12); return (s > 0 ? '+' : '') + s + ' st';
       case 'oct4': s = (v * 4).toFixed(1); return (v > 0 ? '+' : '') + s + ' oct';
@@ -250,6 +262,13 @@ var Knobs = (function () {
         text(ctx, nm, cx, cy + 1, '600 ' + (r * 0.85).toFixed(1) + 'px ' + SANS, hsla(hueOf(Math.round(st.v)), 90, 66, 0.95), 'center');
         ctx.restore(); break;
       }
+      case 'phase': {
+        // where in its cycle the LFO starts: a dot on the circle, a quarter of the way round at 90°
+        p = new Path2D(); p.arc(cx, cy, r * 0.6, 0, TAU); ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 1; ctx.stroke(p);
+        p = new Path2D(); p.arc(cx, cy, r * 0.6, -Math.PI / 2, -Math.PI / 2 + Math.max(0.01, x * TAU)); neon(ctx, p, h, s, lw * 0.9, k * 0.8);
+        glowDot(ctx, cx + Math.cos(-Math.PI / 2 + x * TAU) * r * 0.6, cy + Math.sin(-Math.PI / 2 + x * TAU) * r * 0.6, r * 0.11, h, s, k);
+        break;
+      }
       case 'tempo': {
         var bb = st.beat || 0, phs = bb - Math.floor(bb);
         p = new Path2D(); p.arc(cx, cy, r * 0.6, 0, TAU); ctx.strokeStyle = 'rgba(255,255,255,0.1)'; ctx.lineWidth = 1; ctx.stroke(p);
@@ -288,9 +307,11 @@ var Knobs = (function () {
     ctx.clearRect(0, 0, cssW, cssH);
     var W = Math.min(cssW, cssH - 18), cx = cssW / 2, cy = W / 2, R = W / 2 - 1.5;
     var x = clamp(spec.log ? Math.log(st.v / spec.min) / Math.log(spec.max / spec.min) : (st.v - spec.min) / Math.max(1e-9, spec.max - spec.min), 0, 1);
-    var from = spec.fmt === 'bip' || spec.fmt === 'semi' || spec.fmt === 'oct4' || spec.fmt === 'sint' || spec.fmt === 'octs' || spec.fmt === 'angle' ? clamp((0 - spec.min) / Math.max(1e-9, spec.max - spec.min), 0, 1) : 0;
+    var from = spec.fmt === 'bip' || spec.fmt === 'semi' || spec.fmt === 'oct4' || spec.fmt === 'sint' || spec.fmt === 'octs' || spec.fmt === 'angle' || spec.fmt === 'scents' ? clamp((0 - spec.min) / Math.max(1e-9, spec.max - spec.min), 0, 1) : 0;
     var h = st.hue, s = st.sat, A0 = Math.PI * 0.75, SW = Math.PI * 1.5;
-    var big = W >= 70, tw = Math.max(2, W * 0.036), rv = R - (big ? 7 : 5.5), rf = rv - tw / 2 - (big ? 5 : 3.5);
+    // a ring per route outside the value ring (up to 3: see modRings): the knob gives up room for the second and third
+    var md = st.mod, rings = md && md.rings && md.rings.length ? md.rings : null, nr = rings ? Math.min(3, rings.length) : 0;
+    var big = W >= 70, tw = Math.max(2, W * 0.036), gap = tw * 1.3, rv = R - (big ? 7 : 5.5) - Math.max(0, nr - 1) * gap, rf = rv - tw / 2 - (big ? 5 : 3.5);
     ctx.lineCap = 'round';
     arc(ctx, cx, cy, rv, A0, A0 + SW, 'rgba(255,255,255,0.07)', tw);
     var lo = Math.min(from, x), hi = Math.max(from, x);
@@ -308,6 +329,14 @@ var Knobs = (function () {
     }
     var ab = A0 + SW * x;
     glowDot(ctx, cx + Math.cos(ab) * rv, cy + Math.sin(ab) * rv, tw * 0.75, h, s, 1);
+    // modulation: a ring per route in its source's colour, its reach and where that source has it now
+    if (rings) modRings(ctx, cx, cy, rv + tw * 1.45, gap, tw * 0.62, rings, md.hot, A0, SW);
+    if (st.assign) { // assigning: a dashed ring on what the source can take, a whole one on what it already moves, in its colour
+      var at = st.assignTone || { h: PEARL.h, s: 40, l: 82 };
+      ctx.save(); ctx.setLineDash(st.assign === 2 ? [] : [3, 4]);
+      arc(ctx, cx, cy, R - 0.5, 0, TAU, hsla(at.h, at.s, at.l, st.assign === 2 ? 0.95 : 0.7), 1.4);
+      ctx.restore();
+    }
     var fg = ctx.createRadialGradient(cx - rf * 0.3, cy - rf * 0.4, rf * 0.1, cx, cy, rf);
     fg.addColorStop(0, '#222226'); fg.addColorStop(1, '#09090b');
     dot(ctx, cx, cy, rf, fg);
@@ -321,9 +350,38 @@ var Knobs = (function () {
     ctx.beginPath();
     ctx.moveTo(cx + Math.cos(ab) * rf * 0.8, cy + Math.sin(ab) * rf * 0.8);
     ctx.lineTo(cx + Math.cos(ab) * rf * 0.98, cy + Math.sin(ab) * rf * 0.98);
-    ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1.6; ctx.stroke();
-    text(ctx, fmt(spec.fmt, st.v, spec), cx, W + 9, (st.dragging ? '600 ' : '500 ') + (big ? 13 : 11) + 'px ' + MONO,
-      st.dragging ? hsla(h, Math.min(s, 80), 74, 1) : st.hover ? 'rgba(236,236,240,0.92)' : 'rgba(220,220,228,0.55)', 'center');
+    var moving = md && md.live >= 0;
+    ctx.strokeStyle = moving ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1.6; ctx.stroke();
+    if (moving) { // the needle: where the knob really is with every route added (what is heard)
+      var al = A0 + SW * md.live;
+      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + Math.cos(al) * rf * 0.92, cy + Math.sin(al) * rf * 0.92);
+      ctx.strokeStyle = 'rgba(255,255,255,0.92)'; ctx.lineWidth = 2; ctx.stroke();
+      dot(ctx, cx, cy, 2.4, '#ffffff');
+    }
+    text(ctx, st.text || fmt(spec.fmt, st.v, spec), cx, W + 9, (st.dragging || st.text ? '600 ' : '500 ') + (big ? 13 : 11) + 'px ' + MONO,
+      st.textCol || (st.dragging ? hsla(h, Math.min(s, 80), 74, 1) : st.hover ? 'rgba(236,236,240,0.92)' : 'rgba(220,220,228,0.55)'), 'center');
+  }
+  /** The routes' rings, inner to outer from r0: each its source's reach and a dot where that source has the knob now.
+      Three at most: past three the first two keep theirs and the rest share the third, pearl, each still its own dot
+      (and its reach in its colour while its tag is hovered). A hovered route's ring lights, the others dim. */
+  function modRings(ctx, cx, cy, r0, gap, lw, rings, hot, A0, SW) {
+    var own = rings.length > 3 ? 2 : rings.length, mine = false, i, g, rr, k;
+    for (i = 0; i < rings.length; i++) if (rings[i].r === hot) mine = true;
+    function reach(g, rr, col, w) { arc(ctx, cx, cy, rr, A0 + SW * g.lo, A0 + SW * Math.max(g.lo + 0.004, g.hi), col, w); }
+    function mark(g, rr, big, k) { if (g.at >= 0) dot(ctx, cx + Math.cos(A0 + SW * g.at) * rr, cy + Math.sin(A0 + SW * g.at) * rr, lw * (big ? 1.35 : 1.05), hsla(g.h, g.s, Math.min(94, g.l + 18), k)); }
+    for (i = 0; i < own; i++) {
+      g = rings[i]; rr = r0 + i * gap; k = mine && g.r !== hot ? 0.28 : 1;
+      reach(g, rr, hsla(g.h, g.s, g.l, (g.r === hot ? 0.95 : 0.62) * k), g.r === hot ? lw * 1.45 : lw);
+      mark(g, rr, g.r === hot, k);
+    }
+    if (rings.length > own) {
+      var rest = rings.slice(own), m = { lo: 1, hi: 0 }, hotG = null;
+      rr = r0 + own * gap;
+      rest.forEach(function (x) { m.lo = Math.min(m.lo, x.lo); m.hi = Math.max(m.hi, x.hi); if (x.r === hot) hotG = x; });
+      reach(m, rr, hsla(PEARL.h, 30, 82, mine && !hotG ? 0.18 : 0.42), lw);
+      if (hotG) reach(hotG, rr, hsla(hotG.h, hotG.s, hotG.l, 0.95), lw * 1.45);
+      rest.forEach(function (x) { mark(x, rr, x === hotG, mine && x !== hotG ? 0.28 : 1); });
+    }
   }
 
   /* a small glowing dot / bar in a channel's color (strips, rails, editor head) */

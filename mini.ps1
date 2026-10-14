@@ -35,14 +35,27 @@
   .\mini.ps1 shot      # the tablet's screen -> build\shot.png
 
 .EXAMPLE
+  .\mini.ps1 web
+  The page: ammonite's desktop\plugin\web is the one page for both apps (Mini
+  mode). Copies its shared files (app.js, app.css, knobs.js, fake-engine.js)
+  into web\ and records the ammonite commit and their hashes in
+  web\SHARED.txt. ammonite is ..mmonite beside this repo, or -Ammonite
+  <folder> / $env:AMMONITE_REPO. Refuses if those files have uncommitted
+  changes there (-Force copies them anyway, marked so). web\index.html and
+  web\dev.html are Mini's own (they switch Mini mode on). mini.ps1 test checks
+  the copies against SHARED.txt.
+
+.EXAMPLE
   .\mini.ps1 serve
   The page for a browser on this PC or the tablet:
   http://<this PC's IP>:<Port>/dev.html (default port 8010).
 #>
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('build', 'test', 'serve', 'pair', 'connect', 'apk', 'install', 'run', 'bench', 'log', 'shot')]
+    [ValidateSet('build', 'test', 'web', 'serve', 'pair', 'connect', 'apk', 'install', 'run', 'bench', 'log', 'shot')]
     [string]$Action,
+    [string]$Ammonite = '',
+    [switch]$Force,
     [int]$Port = 8010,
     [string]$Device = '',
     [string]$Code = '',
@@ -107,6 +120,33 @@ function Invoke-Gradle {
 }
 function Install-App { Invoke-Gradle; Assert-Device; Invoke-Adb install -r $apk }
 
+# The shared page (ammonite desktop/plugin/web, Mini mode): the files copied, and their record
+$shared   = @('app.js', 'app.css', 'knobs.js', 'fake-engine.js')
+$web      = Join-Path $root 'web'
+$record   = Join-Path $web 'SHARED.txt'
+$ammoRepo = if ($Ammonite) { $Ammonite } elseif ($env:AMMONITE_REPO) { $env:AMMONITE_REPO } else { Join-Path (Split-Path -Parent $root) 'ammonite' }
+# a file's SHA-256 with CRLF read as LF (git may check either out)
+function Get-TextHash($path) {
+    $text  = [IO.File]::ReadAllText($path).Replace("`r`n", "`n")
+    $bytes = (New-Object Text.UTF8Encoding $false).GetBytes($text)
+    $sha   = [Security.Cryptography.SHA256]::Create()
+    -join ($sha.ComputeHash($bytes) | ForEach-Object { $_.ToString('x2') })
+}
+# web's shared files as SHARED.txt has them: the problems found (empty: all as copied)
+function Test-SharedWeb {
+    if (-not (Test-Path $record)) { return @('web\SHARED.txt missing: .\mini.ps1 web') }
+    $bad = @()
+    $lines = Get-Content $record | Where-Object { $_ -match '^\S+ [0-9a-f]{64}$' }
+    foreach ($f in $shared) {
+        $line = $lines | Where-Object { $_.StartsWith("$f ") }
+        if (-not $line) { $bad += "$f not in SHARED.txt"; continue }
+        $p = Join-Path $web $f
+        if (-not (Test-Path $p)) { $bad += "web\$f missing"; continue }
+        if ((Get-TextHash $p) -ne ($line -split ' ')[1]) { $bad += "web\$f changed since it was copied (change it in ammonite, then .\mini.ps1 web)" }
+    }
+    $bad
+}
+
 New-Item -ItemType Directory -Force $build | Out-Null
 
 switch ($Action) {
@@ -125,8 +165,34 @@ switch ($Action) {
                 if ($LASTEXITCODE -ne 0) { $failed += "$dir\$($t.Name)" }
             }
         }
+        # the page: the shared files as they were copied from ammonite
+        Write-Host '==> web\SHARED.txt' -ForegroundColor Cyan
+        $drift = Test-SharedWeb
+        if ($drift) { $drift | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }; $failed += 'web (shared page)' }
+        else { Write-Host "  the shared page as copied: $((Get-Content $record | Where-Object { $_ -match '^commit ' }))" }
         if ($failed) { throw "failed: $($failed -join ', ')" }
-        Write-Host 'All engine and bridge tests passed.' -ForegroundColor Green
+        Write-Host 'All engine and bridge tests passed; the shared page is as copied.' -ForegroundColor Green
+    }
+    'web' {
+        $src = Join-Path $ammoRepo 'desktop\plugin\web'
+        if (-not (Test-Path (Join-Path $src 'app.js'))) { throw "no ammonite page at $src (-Ammonite <the ammonite folder>)" }
+        $paths  = $shared | ForEach-Object { "desktop/plugin/web/$_" }
+        $commit = (& git -C $ammoRepo rev-parse --short HEAD).Trim()
+        $branch = (& git -C $ammoRepo rev-parse --abbrev-ref HEAD).Trim()
+        $dirty  = & git -C $ammoRepo status --porcelain -- @paths
+        if ($dirty -and -not $Force) { throw "uncommitted changes in ammonite's page ($($dirty -join '; ')): commit them there first, or -Force" }
+        $out = @(
+            '# web\ files shared with ammonite: its desktop/plugin/web, the one page for both apps (Mini mode: app.js MINI).',
+            '# Written by .\mini.ps1 web, checked by .\mini.ps1 test. Do not edit the files below here: change them in ammonite',
+            '# (desktop mode must not change), commit there, then .\mini.ps1 web. Mini''s own: index.html, dev.html.',
+            "commit $commit ($branch)$(if ($dirty) { ' + uncommitted changes' }), copied $(Get-Date -Format 'yyyy-MM-dd')"
+        )
+        foreach ($f in $shared) {
+            Copy-Item -Force (Join-Path $src $f) (Join-Path $web $f)
+            $out += "$f $(Get-TextHash (Join-Path $web $f))"
+        }
+        $out | Set-Content -Encoding ascii $record
+        Write-Host "web\: $($shared -join ', ') from ammonite $commit$(if ($dirty) { ' (with uncommitted changes)' })" -ForegroundColor Green
     }
     'pair'    { if (-not $Device -or -not $Code) { throw 'pair -Device <address:port> -Code <six digits>' }; Invoke-Adb pair $Device $Code }
     'connect' { if (-not $Device) { throw 'connect -Device <address:port>' }; Invoke-Adb connect $Device; Invoke-Adb devices -l }
