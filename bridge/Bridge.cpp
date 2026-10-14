@@ -1,6 +1,7 @@
 /** Ammonite Mini's bridge (Bridge.hpp): desktop's AmmoniteUI.cpp message handling and ticks, without the window,
  *  the dialogs or the plugin host. The JavaScript it builds is desktop's, but for ammo.info's fields and the
- *  ticks: `p` is the bridge's transport, and many small blocks are folded into at most six frames (Tick). */
+ *  ticks: `p` is the bridge's transport, and many small blocks are folded into at most six frames (Tick), with
+ *  `cpk` beside `cpu` for the worst block folded. */
 #include "Bridge.hpp"
 
 #include "Presets.hpp"
@@ -147,7 +148,9 @@ void Bridge::OnMessage(const char* msg)
     {
         int   id = -1;
         float v  = 0.f;
-        if(std::sscanf(msg + 4, "%d %f", &id, &v) == 2 && VisibleIndexOf(id) >= 0)
+        // a host parameter or a route (not a host's on desktop, where the plugin's state follows the routes; here
+        // the engine's patch text carries them)
+        if(std::sscanf(msg + 4, "%d %f", &id, &v) == 2 && (VisibleIndexOf(id) >= 0 || IsRouteId(id)))
             engine_.SetParam(id, ClampParam(id, v));
         return;
     }
@@ -201,28 +204,36 @@ void Bridge::OnMessage(const char* msg)
             SetPlaying(!Playing());
         return;
     }
-    if(std::strncmp(msg, "log ", 4) == 0)
+    if(std::strncmp(msg, "log ", 4) == 0 || std::strncmp(msg, "gl ", 3) == 0)
     {
         Log(msg);
         return;
     }
+    // the output device is desktop's standalone host's: Android routes the audio itself, so the page never hears
+    // of one (no ammo.outputs) and should not ask; quiet if it does
+    if(std::strcmp(msg, "outputs") == 0 || std::strcmp(msg, "output") == 0 || std::strncmp(msg, "output ", 7) == 0)
+        return;
     Log(std::string("page said: ") + msg);
 }
 
 /* ---- bridge -> page */
-/** The parameter table: id, name, symbol, slot (-1 global), min, max, def, steps, flags, names. Once, at ready. */
+/** The parameter table: id, name, symbol, slot (-1 global or the pool), min, max, def, steps, flags, names;
+ *  every saved parameter (desktop's host parameters, and the routes). Once, at ready. */
 void Bridge::SendParams()
 {
     std::string js;
-    js.reserve(70000);
+    js.reserve(160000);
     js += "ammo.params([";
-    for(int i = 0; i < VisibleParamCount(); i++)
+    bool first = true;
+    for(int id = 0; id < kNumIds; id++)
     {
-        const int       id = VisibleId(i);
-        const ParamDef& d  = ParamInfo(id);
+        if(!IsSaved(id))
+            continue;
+        const ParamDef& d = ParamInfo(id);
         int             slot = -1, sp = 0;
         IsSlotId(id, slot, sp);
-        js += i ? ",{id:" : "{id:";
+        js += first ? "{id:" : ",{id:";
+        first = false;
         Num(js, id, "%.0f");
         js += ",n:";
         Str(js, d.name);
@@ -257,15 +268,18 @@ void Bridge::SendParams()
     Eval(js);
 }
 
-/** Every visible value to the page: the engine's, or `byId` (values just set, which the engine takes in only at
+/** Every saved value to the page: the engine's, or `byId` (values just set, which the engine takes in only at
  *  its next block). */
 void Bridge::SendValues(const float* byId)
 {
     std::string js = "ammo.values([";
-    for(int i = 0; i < VisibleParamCount(); i++)
+    bool        first = true;
+    for(int id = 0; id < kNumIds; id++)
     {
-        const int id = VisibleId(i);
-        js += i ? ",[" : "[";
+        if(!IsSaved(id))
+            continue;
+        js += first ? "[" : ",[";
+        first = false;
         Num(js, id, "%.0f");
         js += ",";
         Num(js, byId ? byId[id] : engine_.GetParam(id), "%.6g");
@@ -275,11 +289,12 @@ void Bridge::SendValues(const float* byId)
     Eval(js);
 }
 
-/** A whole patch (a value per id) into the engine and the page. */
+/** A whole patch (a value per id, the routes too) into the engine and the page. */
 void Bridge::ApplyValues(const float* byId)
 {
-    for(int i = 0; i < VisibleParamCount(); i++)
-        engine_.SetParam(VisibleId(i), byId[VisibleId(i)]);
+    for(int id = 0; id < kNumIds; id++)
+        if(IsSaved(id))
+            engine_.SetParam(id, byId[id]);
     SendValues(byId);
 }
 
@@ -432,7 +447,9 @@ void Bridge::StopRecording(bool tell)
  *  frames a second, more than desktop's six a tick could carry: the frames left out are folded into the one sent
  *  after them (its block count covers them, a hit in any of them is its hit, the duck their deepest), so the
  *  page's timing and note history stay whole. Only the last frame carries the waves (the page keeps a channel's
- *  wave until one comes), which keeps a tick's JavaScript small. */
+ *  wave until one comes), which keeps a tick's JavaScript small. A frame sent carries its blocks' CPU load as the
+ *  mean weighted by their lengths (`cpu`: the page weighs frames the same way) and the worst of them (`cpk`); its
+ *  LFOs and routes are its last block's, as each of desktop's frames has them. */
 void Bridge::Tick()
 {
     if(wav_.IsOpen())
@@ -459,10 +476,15 @@ void Bridge::Tick()
         const uint32_t to = (uint32_t)(((uint64_t)(j + 1) * got) / n) - 1; // the frames [from, to] fold into `to`
         AmmoFrame&     f  = frames[j];
         f                 = read_[to];
+        double busy       = (double)f.cpu * f.block;
+        cpuPeak_[j]       = f.cpu;
         for(uint32_t k = from; k < to; k++)
         {
             const AmmoFrame& e = read_[k];
             f.block += e.block;
+            busy += (double)e.cpu * e.block;
+            if(e.cpu > cpuPeak_[j])
+                cpuPeak_[j] = e.cpu;
             for(int s = 0; s < AMMO_SLOTS; s++)
             {
                 AmmoChannelFrame&       c = f.ch[s];
@@ -487,6 +509,8 @@ void Bridge::Tick()
                 }
             }
         }
+        if(f.block > 0)
+            f.cpu = (float)(busy / f.block);
         from = to + 1;
     }
 
@@ -532,6 +556,35 @@ void Bridge::Tick()
         Num(js, f.glueGr, "%.2f");
         js += ",lg:";
         Num(js, f.limitGr, "%.2f");
+        // the modulation pool: the LFOs that ran ({index: value}), the live routes' target positions ({route: 0..1})
+        js += ",lf:{";
+        bool firstL = true;
+        for(int l = 0; l < AMMO_LFOS; l++)
+        {
+            if(!(f.lfoRun >> l & 1u))
+                continue;
+            js += firstL ? "\"" : ",\"";
+            firstL = false;
+            Num(js, l, "%.0f");
+            js += "\":";
+            Num(js, f.lfo[l], "%.3f");
+        }
+        js += "},rt:{";
+        bool firstR = true;
+        for(int r = 0; r < AMMO_ROUTES; r++)
+        {
+            if(f.route[r] < 0.f)
+                continue;
+            js += firstR ? "\"" : ",\"";
+            firstR = false;
+            Num(js, r, "%.0f");
+            js += "\":";
+            Num(js, f.route[r], "%.4f");
+        }
+        js += "},cpu:";
+        Num(js, f.cpu, "%.4f");
+        js += ",cpk:";
+        Num(js, cpuPeak_[i], "%.4f");
         js += ",ch:{";
         bool firstCh = true;
         for(int s = 0; s < AMMO_SLOTS; s++)

@@ -1,6 +1,7 @@
 """The bridge (bridge/Bridge.hpp) headless, through its C API in the engine DLL: what the page is sent at
-`ready`, `set` reaching the engine, the shape of a tick, the transport, presets, patch files through the
-platform's picker, recording. Run by mini.ps1 test (AMMO_ENGINE_DLL names the DLL)."""
+`ready`, `set` reaching the engine (the modulation routes too), the shape of a tick (the pool's LFOs and routes,
+the CPU load), the transport, presets, patch files through the platform's picker (routes kept), recording. Run by
+mini.ps1 test (AMMO_ENGINE_DLL names the DLL)."""
 import base64
 import ctypes as C
 import json
@@ -10,7 +11,8 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "engine"))
-from engine_api import DLL, Engine, check, done, pid  # noqa: E402  (exits early if the DLL is not built)
+from engine_api import (DLL, SRC_LFO1, Engine, check, done, info_id, lfo_id, pid,  # noqa: E402  (exits early if the DLL
+                        route_id)                                                # is not built)
 
 EVAL = C.CFUNCTYPE(None, C.c_void_p, C.c_char_p)
 PICK = C.CFUNCTYPE(None, C.c_void_p, C.c_int, C.c_char_p)
@@ -32,6 +34,9 @@ DLL.ammo_bridge_patch_text.argtypes = [C.c_void_p, C.c_char_p, C.c_int]
 DLL.ammo_bridge_saved.argtypes = [C.c_void_p, C.c_char_p, C.c_int]
 DLL.ammo_bridge_opened.argtypes = [C.c_void_p, C.c_char_p, C.c_char_p, C.c_int]
 DLL.ammo_preset_count.restype = C.c_int
+PF_HIDDEN = 4  # engine/Params.hpp: a reserved id, not saved
+SAVED = [i for i in range(4096) if info_id(i) is not None and not info_id(i).flags & PF_HIDDEN]  # the host's and the routes
+ROUTE_IDS = [i for i in SAVED if route_id(0, "src") <= i <= route_id(127, "pol")]
 
 
 def js_args(js):
@@ -99,7 +104,11 @@ r = Rig()
 calls = r.say("ready")
 check([f for f, _ in calls] == ["params", "values", "presets", "info"], "ready -> params, values, presets, info: %s" % [f for f, _ in calls])
 table = calls[0][1][0]
-check(len(table) == DLL.ammo_param_count(), "params: %d entries, as the engine's visible table (%d)" % (len(table), DLL.ammo_param_count()))
+check(len(ROUTE_IDS) == 512 and len(SAVED) == DLL.ammo_param_count() + 512,
+      "the engine saves %d ids: its %d host parameters and 128 routes x 4" % (len(SAVED), DLL.ammo_param_count()))
+check([d["id"] for d in table] == SAVED, "params: %d entries, every saved id in order (the routes too)" % len(table))
+rd = next(d for d in table if d["id"] == route_id(0, "target"))
+check(rd["slot"] == -1 and rd["min"] == -1 and rd["def"] == -1, "a route's target: slot -1, -1 (none) by default")
 by_s = {(d["s"], d["slot"]): d for d in table}
 gen1 = by_s.get(("gen", 0))
 check(gen1 is not None and gen1["id"] == pid("gen", 0) and gen1["names"][:2] == ["Off", "Arp"] and gen1["steps"] == 5,
@@ -129,6 +138,17 @@ check(r.e.get("gen", 3) == 3, "set a stepped parameter 2.6 -> %g" % r.e.get("gen
 r.say("set %d 110" % tempo)
 r.say("set %d 0" % pid("gen", 3))
 
+# ---- routes: not desktop's host parameters, set straight into the engine like the rest
+cutoff = pid("cutoff", 0)
+for k, v in (("src", SRC_LFO1 + 20), ("target", cutoff), ("amt", 0.4), ("pol", 0)):
+    r.say("set %d %g" % (route_id(99, k), v))
+check([r.e.get_id(route_id(99, k)) for k in ("src", "target", "amt", "pol")] == [SRC_LFO1 + 20, cutoff, C.c_float(0.4).value, 0],
+      "set route 100: LFO 21 on channel 1's Cutoff, 40 %, unipolar, in the engine")
+r.say("set %d 3" % route_id(99, "amt"))
+check(r.e.get_id(route_id(99, "amt")) == 1, "a route's amount clamped to 1")
+r.say("set %d 0.4" % route_id(99, "amt"))
+r.say("set %d 1" % lfo_id(20, "on"))
+
 # ---- a tick: the frames since the last, desktop's shape
 r.e.render(0.5)
 calls = r.tick()
@@ -136,8 +156,12 @@ check(len(calls) == 1 and calls[0][0] == "tick", "a tick after 0.5 s: one ammo.t
 frames, hostinfo = calls[0][1]
 check(1 <= len(frames) <= 6, "it carries %d frames (at most 6)" % len(frames))
 f = frames[-1]
-keys = ["s", "b", "t", "p", "h", "cr", "cd", "cq", "pp", "pl", "km", "cm", "sr", "bl", "mr", "mp", "gg", "lg", "ch"]
+keys = ["s", "b", "t", "p", "h", "cr", "cd", "cq", "pp", "pl", "km", "cm", "sr", "bl", "mr", "mp", "gg", "lg", "lf", "rt", "cpu", "cpk", "ch"]
 check(list(f.keys()) == keys, "a frame's fields: %s" % ",".join(f.keys()))
+check("20" in f["lf"] and -1 <= f["lf"]["20"] <= 1,
+      "lf: the LFOs that ran, by index, LFO 21 among them: %s" % f["lf"])
+check("99" in f["rt"] and all(0 <= v <= 1 for v in f["rt"].values()), "rt: the live routes' positions, route 100 among them: %s" % f["rt"])
+check(all(0 < g["cpu"] <= g["cpk"] < 1 for g in frames), "cpu: the engine's load, cpk its worst block (%s)" % ["%.4f/%.4f" % (g["cpu"], g["cpk"]) for g in frames])
 check(f["p"] == 1 and f["h"] == 0 and f["sr"] == 48000, "playing (the bridge's transport), no host clock, 48000 Hz")
 check(set(f["ch"].keys()) == {"0", "1", "2"}, "First light: channels 0, 1, 2 in it (%s)" % ",".join(sorted(f["ch"])))
 c = f["ch"]["0"]
@@ -179,6 +203,21 @@ got = sum(1 for f in sent for c in f["ch"].values() if c["h"])
 check(hits_ref > 0 and got == want, "hits: %d in the 20 blocks, %d frames x channels with one, %d sent" % (hits_ref, want, got))
 check(all("w" not in c for f in sent[:-1] for c in f["ch"].values()) and all("w" in c for c in sent[-1]["ch"].values()),
       "waves in the last frame only")
+check(all(0 < f["cpu"] <= f["cpk"] + 1e-4 for f in sent), "a folded frame's cpu (its blocks' mean) is at most its cpk (their worst)")
+for e in (sb.e, twin):  # Slow tide: three LFOs on the pads
+    DLL.ammo_apply_preset(C.c_void_p(e.p), 2)
+    e.render(0.5, block=96)
+while sb.tick():
+    pass
+twin.frames()
+sb.e.render(20 * 96 / 48000, block=96)
+_, _, ref_frames = twin.render(20 * 96 / 48000, block=96, collect=True)
+sent = sb.tick()[0][1][0]
+lasts = [ref_frames[(j + 1) * 20 // 6 - 1] for j in range(6)]
+want_lf = [{str(l): round(f.lfo[l], 3) for l in range(32) if f.lfoRun >> l & 1} for f in lasts]
+want_rt = [{str(q): round(f.route[q], 4) for q in range(128) if f.route[q] >= 0} for f in lasts]
+check(len(want_lf[-1]) == 3 and len(want_rt[-1]) > 0 and [f["lf"] for f in sent] == want_lf and [f["rt"] for f in sent] == want_rt,
+      "Slow tide folded: each frame's lf and rt are its last block's (%d LFOs, %d routes)" % (len(want_lf[-1]), len(want_rt[-1])))
 twin.close()
 sb.close()
 
@@ -207,7 +246,9 @@ check([fn for fn, _ in calls] == ["values", "presets"], "preset 7 -> values, pre
 ref = Engine()
 DLL.ammo_apply_preset(C.c_void_p(ref.p), 7)
 ids = [d["id"] for d in table]
-check(all(abs(r.e.get_id(i) - ref.get_id(i)) < 1e-5 for i in ids), "the engine now has preset 7's values (as ammo_apply_preset)")
+check(all(abs(r.e.get_id(i) - ref.get_id(i)) < 1e-5 for i in ids), "the engine now has preset 7's values, the routes too (as ammo_apply_preset)")
+check(r.e.get_id(route_id(99, "src")) == 0 and any(ref.get_id(route_id(q, "src")) for q in range(128)),
+      "route 100 set earlier is gone; the preset's own routes are in")
 sent = dict((int(i), v) for i, v in calls[0][1][0])
 check(all(abs(sent[i] - ref.get_id(i)) < 1e-5 * max(1, abs(sent[i])) for i in ids), "and the page was sent them")
 check(calls[1][1][1] == 7 and calls[1][1][2] == "", "presets: current 7")
@@ -245,6 +286,33 @@ ref = Engine()
 DLL.ammo_apply_preset(C.c_void_p(ref.p), 7)
 check(all(abs(r.e.get_id(i) - ref.get_id(i)) < 1e-4 for i in ids), "the engine is back at the saved patch (preset 7's values)")
 ref.close()
+
+# ---- a route made on the page goes out with the patch text and comes back with it
+r.say("preset 1")
+r.say("set %d %d" % (route_id(127, "src"), SRC_LFO1 + 31))
+r.say("set %d %d" % (route_id(127, "target"), pid("volume")))
+r.say("set %d -0.25" % route_id(127, "amt"))
+r.say("save {}")
+n = DLL.ammo_bridge_patch_text(r.b, None, 0)
+buf = C.create_string_buffer(n + 1)
+DLL.ammo_bridge_patch_text(r.b, buf, n + 1)
+text2 = buf.value.decode()
+check(text2.startswith("ammonite-desktop 3\n") and "%d -0.25" % route_id(127, "amt") in text2,
+      "the patch text (version 3) has route 128's amount")
+r.say("preset 1")
+check(r.e.get_id(route_id(127, "src")) == 0, "a preset clears it")
+DLL.ammo_bridge_opened(r.b, b"routed.ammo", text2.encode(), len(text2.encode()))
+check([r.e.get_id(route_id(127, k)) for k in ("src", "target", "amt")] == [SRC_LFO1 + 31, pid("volume"), -0.25],
+      "opening the file brings route 128 back: LFO 32 on the volume, -25 %")
+sent = dict((int(i), v) for i, v in r.last("values")[0])
+check(sent[route_id(127, "target")] == pid("volume"), "and the page is sent it")
+
+# ---- desktop-only messages: the output device (its standalone host's), the stage's GL status
+logs = len(r.logs)
+check(r.say("outputs") == [] and r.say("output 3") == [] and r.say("output") == [] and len(r.logs) == logs,
+      "outputs / output: no output devices here, ignored quietly")
+r.say("gl ok webgl2")
+check(r.logs[-1] == "gl ok webgl2", "gl ...: logged as it came")
 r.calls.clear()
 DLL.ammo_bridge_opened(r.b, b"notes.txt", b"hello", 5)
 check(r.last("toast") == ["Not an Ammonite patch: notes.txt"] and r.last("values") is None, "a file that is not a patch: a toast, nothing applied")

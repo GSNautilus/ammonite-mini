@@ -1,10 +1,18 @@
-/** The parameter table of Ammonite Desktop: every host parameter, with a
- *  stable id that is never renumbered (docs/PHASE2_ENGINE.md section 2).
+/** The parameter table of Ammonite Desktop: every parameter, with a stable
+ *  id that is never renumbered (docs/PHASE2_ENGINE.md section 2).
  *
- *  Ids 0..63 are global; slot s (0..15) owns 64 + 128 s .. 64 + 128 s + 127.
- *  Unused ids inside a block are reserved: hidden parameters today, room for
- *  tomorrow. Adding a parameter means taking the next free index of its
- *  block, never moving an existing one.
+ *  Ids 0..63 are global; slot s (0..15) owns 64 + 128 s .. 64 + 128 s + 127;
+ *  the modulation pool owns 2112 .. 3135 (docs/PHASE4_BREADTH.md section
+ *  8.2): 32 LFOs, the macros, 128 routes. Unused ids inside a block are
+ *  reserved: hidden parameters today, room for tomorrow. Adding a parameter
+ *  means taking the next free index of its block, never moving an existing
+ *  one. Retired ids (section 7's per-channel and global LFOs and routes) stay
+ *  in the table, hidden, so a version 2 patch can still be read and
+ *  converted.
+ *
+ *  A host sees every parameter but the hidden ones and the routes (pfNoHost:
+ *  saved with the patch, never a host parameter; 128 x 4 would swamp a host's
+ *  list). The host index is not the id.
  *
  *  Values are in natural units where that reads well (BPM, cents, pan -1..1,
  *  integers for steps) and 0..1 otherwise; the curves behind the 0..1 ones
@@ -13,13 +21,57 @@
 
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 
 namespace ammo {
 
 constexpr int kSlots      = 16;
 constexpr int kGlobalIds  = 64;
 constexpr int kSlotStride = 128;
-constexpr int kNumIds     = kGlobalIds + kSlots * kSlotStride; // 2112
+constexpr int kPoolBase   = kGlobalIds + kSlots * kSlotStride; // 2112: the modulation pool
+constexpr int kPoolIds    = 1024;
+constexpr int kNumIds     = kPoolBase + kPoolIds; // 3136
+
+// the pool's caps (fixed at compile time: the audio thread allocates nothing, a host sees a fixed list)
+constexpr int kPoolLfos = 32, kPoolMacros = 16, kPoolRoutes = 128;
+// LFO l (0..31): kLfoBase + kLfoStride l + LfoParam; its eighth id is reserved
+constexpr int kLfoBase = kPoolBase, kLfoStride = 8;
+enum LfoParam
+{
+    lOn = 0, // in use: the page lists it (an LFO also runs while a live route takes it)
+    lShape,
+    lSync,
+    lRate,
+    lDiv,
+    lPhase,
+    lRestart, // 0 Free, n: the notes of channel n
+    kLfoParamsUsed
+};
+// macro m (0..15): in use at kMacroOnBase + m; the value at kMacroValBase + m for m >= 4 (macros 1..4 are
+// the global ids gMacro1..4, the host's automation path since section 7; kMacroValBase + 0..3 are reserved)
+constexpr int kMacroOnBase = kPoolBase + kPoolLfos * kLfoStride; // 2368
+constexpr int kMacroValBase = kMacroOnBase + kPoolMacros;       // 2384
+// route r (0..127): kRouteBase + kRouteStride r + RouteParam; 2912 .. 3135 reserved
+constexpr int kRouteBase = kMacroValBase + kPoolMacros, kRouteStride = 4; // 2400
+enum RouteParam
+{
+    rSrc = 0, // ModSource
+    rTarget,  // a parameter id (IsModTarget), -1: none
+    rAmt,     // -1..1 of the target's whole range
+    rPol,     // 0 Unipolar, 1 Bipolar (the default)
+};
+constexpr int kPoolEnd = kRouteBase + kPoolRoutes * kRouteStride; // 2912
+/** A route's source: off, a pool LFO, a macro. */
+enum ModSource
+{
+    kSrcOff    = 0,
+    kSrcLfo1   = 1, // .. kSrcLfo1 + 31
+    kSrcMacro1 = kSrcLfo1 + kPoolLfos, // 33 .. 48
+    kNumModSources = kSrcMacro1 + kPoolMacros
+};
+inline int LfoId(int l, int k) { return kLfoBase + kLfoStride * l + k; }
+inline int RouteId(int r, int k) { return kRouteBase + kRouteStride * r + k; }
+inline int MacroOnId(int m) { return kMacroOnBase + m; }
 
 enum GlobalParam
 {
@@ -48,8 +100,20 @@ enum GlobalParam
     // phase 4, package B: the master bus
     gGlue,
     gCeiling,
-    kNumGlobalParams
+    // the custom progression (Progression = Custom): its length and eight degrees
+    gProgLen,
+    gProgStep1, // .. gProgStep1 + 7
+    // retired (hidden, read only to convert a version 2 patch): section 7's two global LFOs, kGlobalLfoParams
+    // each: shape, sync, rate, division, phase
+    gLfo1Shape = gProgStep1 + 8,
+    gLfo1Sync,
+    gLfo1Rate,
+    gLfo1Div,
+    gLfo1Phase,
+    gLfo2Shape, // .. gLfo2Shape + 4
+    kNumGlobalParams = gLfo2Shape + 5
 };
+constexpr int kGlobalLfoParams = 5; // gLfo1Shape + kGlobalLfoParams * l + (shape, sync, rate, div, phase)
 
 enum SlotParam
 {
@@ -123,8 +187,22 @@ enum SlotParam
     // phase 4, sound after the first listen
     cChorusMode,
     cChordLetRing,
-    kNumSlotParams
+    // modulation: a fine tune (the pitch an LFO can move: vibrato)
+    cTune,
+    // retired (hidden, read only to convert a version 2 patch): section 7's two LFOs per channel and four routes
+    cLfo1Shape, // kLfoParams each: shape, sync, rate, division, phase, retrigger
+    cLfo1Sync,
+    cLfo1Rate,
+    cLfo1Div,
+    cLfo1Phase,
+    cLfo1Retrig,
+    cLfo2Shape, // .. cLfo2Shape + 5
+    cMod1Src = cLfo2Shape + 6, // kRouteParams each: source, destination, amount
+    cMod1Dest,
+    cMod1Amt,
+    kNumSlotParams = cMod1Src + 4 * 3
 };
+constexpr int kSlotLfos = 2, kLfoParams = 6, kRoutes = 4, kRouteParams = 3;
 
 enum ParamFlags : uint32_t
 {
@@ -132,6 +210,7 @@ enum ParamFlags : uint32_t
     pfInteger     = 2, // steps or integers: shown as names or whole numbers
     pfHidden      = 4, // a reserved id: not shown, not saved
     pfBoolean     = 8,
+    pfNoHost      = 16, // saved with the patch, not a host parameter (the routes)
 };
 
 struct ParamDef
@@ -149,7 +228,7 @@ inline const char* const kSyncNames[]    = {"Host", "Internal"};
 inline const char* const kNoteNames[]    = {"C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"};
 inline const char* const kScaleNames[]   = {"Major", "Minor", "Dorian", "Phrygian", "Lydian", "Mixolydian", "Harmonic minor", "Pentatonic", "Pentatonic minor", "Blues",
                                             "Maj", "Min", "Sus2", "Sus4", "Maj7", "Min7", "Dom7", "Dim", "Aug", "Add9"};
-inline const char* const kProgNames[]    = {"Off", "Pop I V vi IV", "50s I vi IV V", "Sad vi IV I V", "Epic i VI III VII", "Jazz ii V I I", "Vamp I IV", "Canon", "Fall i VII VI v"};
+inline const char* const kProgNames[]    = {"Off", "Pop I V vi IV", "50s I vi IV V", "Sad vi IV I V", "Epic i VI III VII", "Jazz ii V I I", "Vamp I IV", "Canon", "Fall i VII VI v", "Custom"};
 inline const char* const kChangeNames[]  = {"1/2 bar", "1 bar", "2 bars", "4 bars"};
 inline const char* const kRomanNames[]   = {"I", "II", "III", "IV", "V", "VI", "VII"};
 inline const char* const kRestartNames[] = {"Free", "Bar", "Chord"};
@@ -170,17 +249,57 @@ inline const char* const kDrumModelNames[]    = {"Kick", "Snare", "Hat", "Open h
 inline const char* const kDelayDivNames[]     = {"1/32", "1/16", "1/16T", "1/8", "1/8T", "1/8.", "1/4", "1/4T", "1/4.", "1/2", "1/1"};
 inline const char* const kChorusModeNames[]   = {"Chorus", "Ensemble", "Vibrato"};
 inline const char* const kDuckSourceNames[]   = {"Off", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16"};
+// modulation (Mod.hpp)
+inline const char* const kLfoShapeNames[]  = {"Sine", "Triangle", "Saw up", "Saw down", "Square", "Random", "Drift"};
+inline const char* const kLfoSyncNames[]   = {"Free", "Tempo"};
+inline const char* const kLfoDivNames[]    = {"16/1", "8/1", "4/1", "2/1", "1/1", "1/2.", "1/2", "1/4.",
+                                              "1/4",  "1/4T", "1/8.", "1/8", "1/8T", "1/16", "1/16T", "1/32"};
+inline const char* const kLfoRetrigNames[] = {"Free", "Note"}; // retired with section 7's LFOs
+inline const char* const kModSrcNames[]    = {"Off", "LFO 1", "LFO 2", "Global LFO 1", "Global LFO 2", "Macro 1", "Macro 2", "Macro 3", "Macro 4"}; // retired
+inline const char* const kLfoRestartNames[] = {"Free", "Notes 1", "Notes 2", "Notes 3", "Notes 4", "Notes 5", "Notes 6", "Notes 7", "Notes 8",
+                                               "Notes 9", "Notes 10", "Notes 11", "Notes 12", "Notes 13", "Notes 14", "Notes 15", "Notes 16"};
+inline const char* const kPolarityNames[]   = {"Unipolar", "Bipolar"};
+/** The continuous parameters of a channel a route can move, by step (0: none). Section 7's routes saved the step,
+ *  so a version 2 patch reads it from here: append only, never reorder. The names are the parameters' own. */
+inline const int kModDests[] = {-1,
+                                cLevel, cPan, cTune,
+                                cShape, cDetune, cSub, cNoise, cDrive, cGlide,
+                                cCutoff, cReso, cFilterType, cFiltEnvAmount, cFiltAttack, cFiltDecay,
+                                cAmpAttack, cAmpDecay, cAmpSustain, cAmpRelease, cPitchEnvAmount, cPitchDecay,
+                                cArpGate, cArpDensity, cArpVary, cArpRatchet, cChordStrum, cRhythmChance,
+                                cDrumTune, cDrumDecay, cDrumTone, cDrumSnap,
+                                cFxDrive, cFxTone, cChorusRate, cChorusDepth, cChorusMix,
+                                cDelayFeedback, cDelayDamping, cDelayMix, cRevSend, cDuckAmount};
+constexpr int            kNumModDests = sizeof(kModDests) / sizeof(kModDests[0]);
+/** The step of slot parameter `p` in kModDests (0 if a route cannot move it). */
+inline int ModDestStep(int p)
+{
+    for(int i = 1; i < kNumModDests; i++)
+        if(kModDests[i] == p)
+            return i;
+    return 0;
+}
+inline const char* const kModDestNames[kNumModDests] = {"None",
+                                                        "Level", "Pan", "Fine tune",
+                                                        "Shape", "Detune", "Sub", "Noise", "Drive", "Glide",
+                                                        "Cutoff", "Resonance", "Filter type", "Filter env amount", "Filter attack", "Filter decay",
+                                                        "Amp attack", "Amp decay", "Amp sustain", "Amp release", "Pitch env amount", "Pitch decay",
+                                                        "Arp gate", "Arp density", "Arp vary", "Arp ratchet", "Strum", "Chance",
+                                                        "Drum tune", "Drum decay", "Drum tone", "Drum snap",
+                                                        "FX drive", "FX drive tone", "Chorus rate", "Chorus depth", "Chorus mix",
+                                                        "Delay feedback", "Delay damping", "Delay mix", "Reverb send", "Duck amount"};
 
 constexpr uint32_t kA  = pfAutomatable;
 constexpr uint32_t kAI = pfAutomatable | pfInteger;
+constexpr uint32_t kRetired = pfHidden; // section 7's modulation ids: their defaults still read a version 2 patch
 
 inline const ParamDef kGlobalDefs[kNumGlobalParams] = {
     {"Tempo", "tempo", 20.f, 240.f, 110.f, 0, nullptr, kA},
-    {"Sync", "sync", 0.f, 1.f, 0.f, 2, kSyncNames, kAI},
+    {"Sync", "sync", 0.f, 1.f, 1.f, 2, kSyncNames, kAI}, // Internal: the Tempo knob, whatever the host plays
     {"Swing", "swing", 0.f, 1.f, 0.f, 0, nullptr, kA},
     {"Root", "root", 0.f, 11.f, 9.f, 12, kNoteNames, kAI},
     {"Scale", "scale", 0.f, 19.f, 1.f, 20, kScaleNames, kAI},
-    {"Progression", "prog", 0.f, 8.f, 0.f, 9, kProgNames, kAI},
+    {"Progression", "prog", 0.f, 9.f, 0.f, 10, kProgNames, kAI},
     {"Chord change", "change", 0.f, 3.f, 1.f, 4, kChangeNames, kAI},
     {"Chord", "chord", 0.f, 6.f, 0.f, 7, kRomanNames, kAI},
     {"Restart", "restart", 0.f, 2.f, 0.f, 3, kRestartNames, kAI},
@@ -198,6 +317,26 @@ inline const ParamDef kGlobalDefs[kNumGlobalParams] = {
     {"Reverb return", "rev_return", 0.f, 1.f, 0.6f, 0, nullptr, kA},
     {"Glue", "glue", 0.f, 1.f, 0.3f, 0, nullptr, kA},           // the master compressor: 0 off
     {"Ceiling", "ceiling", -12.f, 0.f, -0.3f, 0, nullptr, kA}, // the limiter, dBFS
+    {"Progression length", "prog_len", 1.f, 8.f, 4.f, 8, nullptr, kAI}, // the custom one: I IV V I until edited
+    {"Progression step 1", "prog_s1", 0.f, 6.f, 0.f, 7, kRomanNames, kAI},
+    {"Progression step 2", "prog_s2", 0.f, 6.f, 3.f, 7, kRomanNames, kAI},
+    {"Progression step 3", "prog_s3", 0.f, 6.f, 4.f, 7, kRomanNames, kAI},
+    {"Progression step 4", "prog_s4", 0.f, 6.f, 0.f, 7, kRomanNames, kAI},
+    {"Progression step 5", "prog_s5", 0.f, 6.f, 0.f, 7, kRomanNames, kAI},
+    {"Progression step 6", "prog_s6", 0.f, 6.f, 0.f, 7, kRomanNames, kAI},
+    {"Progression step 7", "prog_s7", 0.f, 6.f, 0.f, 7, kRomanNames, kAI},
+    {"Progression step 8", "prog_s8", 0.f, 6.f, 0.f, 7, kRomanNames, kAI},
+    // retired: section 7's global LFOs (a version 2 patch's become pool LFOs)
+    {"Global LFO 1 shape", "glfo1_shape", 0.f, 6.f, 0.f, 7, kLfoShapeNames, kRetired},
+    {"Global LFO 1 sync", "glfo1_sync", 0.f, 1.f, 1.f, 2, kLfoSyncNames, kRetired},
+    {"Global LFO 1 rate", "glfo1_rate", 0.f, 1.f, 0.5f, 0, nullptr, kRetired},
+    {"Global LFO 1 division", "glfo1_div", 0.f, 15.f, 2.f, 16, kLfoDivNames, kRetired}, // 4 bars
+    {"Global LFO 1 phase", "glfo1_phase", 0.f, 1.f, 0.f, 0, nullptr, kRetired},
+    {"Global LFO 2 shape", "glfo2_shape", 0.f, 6.f, 1.f, 7, kLfoShapeNames, kRetired},
+    {"Global LFO 2 sync", "glfo2_sync", 0.f, 1.f, 1.f, 2, kLfoSyncNames, kRetired},
+    {"Global LFO 2 rate", "glfo2_rate", 0.f, 1.f, 0.5f, 0, nullptr, kRetired},
+    {"Global LFO 2 division", "glfo2_div", 0.f, 15.f, 0.f, 16, kLfoDivNames, kRetired}, // 16 bars
+    {"Global LFO 2 phase", "glfo2_phase", 0.f, 1.f, 0.f, 0, nullptr, kRetired},
 };
 
 inline const ParamDef kSlotDefs[kNumSlotParams] = {
@@ -266,20 +405,115 @@ inline const ParamDef kSlotDefs[kNumSlotParams] = {
     {"Duck amount", "duck_amt", 0.f, 1.f, 0.5f, 0, nullptr, kA},
     {"Chorus mode", "cho_mode", 0.f, 2.f, 0.f, 3, kChorusModeNames, kAI},          // with Chorus (on / off) as before
     {"Let ring", "chord_ring", 0.f, 1.f, 0.f, 2, kOffOnNames, kAI | pfBoolean}, // Chord's Arp: each note held to the change
+    {"Fine tune", "tune", -100.f, 100.f, 0.f, 0, nullptr, kA}, // cents, every instrument
+    {"LFO 1 shape", "lfo1_shape", 0.f, 6.f, 0.f, 7, kLfoShapeNames, kRetired},
+    {"LFO 1 sync", "lfo1_sync", 0.f, 1.f, 1.f, 2, kLfoSyncNames, kRetired},
+    {"LFO 1 rate", "lfo1_rate", 0.f, 1.f, 0.5f, 0, nullptr, kRetired}, // Free: 0.02 .. 20 Hz (LfoHz)
+    {"LFO 1 division", "lfo1_div", 0.f, 15.f, 4.f, 16, kLfoDivNames, kRetired}, // Tempo: 1 bar
+    {"LFO 1 phase", "lfo1_phase", 0.f, 1.f, 0.f, 0, nullptr, kRetired},
+    {"LFO 1 retrigger", "lfo1_retrig", 0.f, 1.f, 0.f, 2, kLfoRetrigNames, kRetired},
+    {"LFO 2 shape", "lfo2_shape", 0.f, 6.f, 1.f, 7, kLfoShapeNames, kRetired},
+    {"LFO 2 sync", "lfo2_sync", 0.f, 1.f, 0.f, 2, kLfoSyncNames, kRetired},
+    {"LFO 2 rate", "lfo2_rate", 0.f, 1.f, 0.6f, 0, nullptr, kRetired}, // 1.25 Hz
+    {"LFO 2 division", "lfo2_div", 0.f, 15.f, 8.f, 16, kLfoDivNames, kRetired}, // 1/4
+    {"LFO 2 phase", "lfo2_phase", 0.f, 1.f, 0.f, 0, nullptr, kRetired},
+    {"LFO 2 retrigger", "lfo2_retrig", 0.f, 1.f, 0.f, 2, kLfoRetrigNames, kRetired},
+    {"Mod 1 source", "mod1_src", 0.f, 8.f, 0.f, 9, kModSrcNames, kRetired},
+    {"Mod 1 destination", "mod1_dest", 0.f, (float)(kNumModDests - 1), 0.f, kNumModDests, kModDestNames, kRetired},
+    {"Mod 1 amount", "mod1_amt", -1.f, 1.f, 0.f, 0, nullptr, kRetired}, // of the destination's whole range
+    {"Mod 2 source", "mod2_src", 0.f, 8.f, 0.f, 9, kModSrcNames, kRetired},
+    {"Mod 2 destination", "mod2_dest", 0.f, (float)(kNumModDests - 1), 0.f, kNumModDests, kModDestNames, kRetired},
+    {"Mod 2 amount", "mod2_amt", -1.f, 1.f, 0.f, 0, nullptr, kRetired},
+    {"Mod 3 source", "mod3_src", 0.f, 8.f, 0.f, 9, kModSrcNames, kRetired},
+    {"Mod 3 destination", "mod3_dest", 0.f, (float)(kNumModDests - 1), 0.f, kNumModDests, kModDestNames, kRetired},
+    {"Mod 3 amount", "mod3_amt", -1.f, 1.f, 0.f, 0, nullptr, kRetired},
+    {"Mod 4 source", "mod4_src", 0.f, 8.f, 0.f, 9, kModSrcNames, kRetired},
+    {"Mod 4 destination", "mod4_dest", 0.f, (float)(kNumModDests - 1), 0.f, kNumModDests, kModDestNames, kRetired},
+    {"Mod 4 amount", "mod4_amt", -1.f, 1.f, 0.f, 0, nullptr, kRetired},
 };
 
 inline const ParamDef kHiddenDef = {"(reserved)", "reserved", 0.f, 1.f, 0.f, 0, nullptr, pfHidden};
 
+/** The modulation pool's definitions (ids kPoolBase ..) with their numbered names, built once into fixed
+ *  buffers (no allocation), and the route sources' names. */
+struct PoolTable
+{
+    ParamDef    defs[kPoolIds];
+    const char* srcNames[kNumModSources];
+    char        names[kPoolIds][28], syms[kPoolIds][20], src[kNumModSources][10];
+
+    PoolTable()
+    {
+        static const char* const kLfoName[kLfoParamsUsed] = {"in use", "shape", "sync", "rate", "division", "phase", "restart"};
+        static const char* const kLfoSym[kLfoParamsUsed]  = {"on", "shape", "sync", "rate", "div", "phase", "restart"};
+        static const char* const kRouteName[kRouteStride] = {"source", "target", "amount", "polarity"};
+        static const char* const kRouteSym[kRouteStride]  = {"src", "target", "amt", "pol"};
+        // the LFOs' settings are host parameters (automatable); in use is the page's (saved, not automated)
+        static const ParamDef kLfo[kLfoParamsUsed] = {
+            {"", "", 0.f, 1.f, 0.f, 2, kOffOnNames, pfInteger | pfBoolean},
+            {"", "", 0.f, 6.f, 0.f, 7, kLfoShapeNames, kAI},
+            {"", "", 0.f, 1.f, 1.f, 2, kLfoSyncNames, kAI},
+            {"", "", 0.f, 1.f, 0.5f, 0, nullptr, kA},        // Free: 0.02 .. 20 Hz (LfoHz)
+            {"", "", 0.f, 15.f, 4.f, 16, kLfoDivNames, kAI}, // Tempo: 1 bar
+            {"", "", 0.f, 1.f, 0.f, 0, nullptr, kA},
+            {"", "", 0.f, 16.f, 0.f, 17, kLfoRestartNames, kAI}};
+        for(int k = 0; k < kPoolIds; k++)
+            defs[k] = kHiddenDef;
+        std::snprintf(src[0], sizeof src[0], "Off");
+        for(int i = 1; i < kNumModSources; i++)
+            std::snprintf(src[i], sizeof src[i], i < kSrcMacro1 ? "LFO %d" : "Macro %d", i < kSrcMacro1 ? i : i - kSrcMacro1 + 1);
+        for(int i = 0; i < kNumModSources; i++)
+            srcNames[i] = src[i];
+        for(int l = 0; l < kPoolLfos; l++)
+            for(int k = 0; k < kLfoParamsUsed; k++)
+                Set(LfoId(l, k), kLfo[k], "LFO %d %s", "lfo%d_%s", l + 1, kLfoName[k], kLfoSym[k]);
+        for(int m = 0; m < kPoolMacros; m++)
+        {
+            Set(MacroOnId(m), {"", "", 0.f, 1.f, 0.f, 2, kOffOnNames, pfInteger | pfBoolean}, "Macro %d %s", "macro%d_%s", m + 1, "in use", "on");
+            if(m >= 4)
+                Set(kMacroValBase + m, {"", "", 0.f, 1.f, 0.f, 0, nullptr, kA}, "Macro %d%s", "macro%d%s", m + 1, "", "");
+        }
+        const ParamDef kRoute[kRouteStride] = {
+            {"", "", 0.f, (float)(kNumModSources - 1), 0.f, kNumModSources, srcNames, pfInteger | pfNoHost},
+            {"", "", -1.f, (float)(kNumIds - 1), -1.f, kNumIds + 1, nullptr, pfInteger | pfNoHost},
+            {"", "", -1.f, 1.f, 0.f, 0, nullptr, pfNoHost}, // of the target's whole range
+            {"", "", 0.f, 1.f, 1.f, 2, kPolarityNames, pfInteger | pfNoHost}};
+        for(int r = 0; r < kPoolRoutes; r++)
+            for(int k = 0; k < kRouteStride; k++)
+                Set(RouteId(r, k), kRoute[k], "Route %d %s", "route%d_%s", r + 1, kRouteName[k], kRouteSym[k]);
+    }
+
+  private:
+    void Set(int id, const ParamDef& d, const char* nameFmt, const char* symFmt, int n, const char* name, const char* sym)
+    {
+        const int k = id - kPoolBase;
+        std::snprintf(names[k], sizeof names[k], nameFmt, n, name);
+        std::snprintf(syms[k], sizeof syms[k], symFmt, n, sym);
+        defs[k]        = d;
+        defs[k].name   = names[k];
+        defs[k].symbol = syms[k];
+    }
+};
+inline const PoolTable& Pool()
+{
+    static const PoolTable t;
+    return t;
+}
+
 inline int  SlotId(int slot, int p) { return kGlobalIds + slot * kSlotStride + p; }
 inline bool IsSlotId(int id, int& slot, int& p)
 {
-    if(id < kGlobalIds || id >= kNumIds)
+    if(id < kGlobalIds || id >= kPoolBase)
         return false;
     slot = (id - kGlobalIds) / kSlotStride;
     p    = (id - kGlobalIds) % kSlotStride;
     return true;
 }
 inline bool IsGlobalId(int id) { return id >= 0 && id < kGlobalIds; }
+inline bool IsPoolId(int id) { return id >= kPoolBase && id < kNumIds; }
+inline bool IsRouteId(int id) { return id >= kRouteBase && id < kPoolEnd; }
+/** The value id of macro m (0..15). */
+inline int MacroId(int m) { return m < 4 ? gMacro1 + m : kMacroValBase + m; }
 
 /** The definition behind an id; kHiddenDef for reserved ids. */
 inline const ParamDef& ParamInfo(int id)
@@ -289,31 +523,51 @@ inline const ParamDef& ParamInfo(int id)
         return id < kNumGlobalParams ? kGlobalDefs[id] : kHiddenDef;
     if(IsSlotId(id, slot, p))
         return p < kNumSlotParams ? kSlotDefs[p] : kHiddenDef;
+    if(IsPoolId(id))
+        return Pool().defs[id - kPoolBase];
     return kHiddenDef;
 }
 
-/** The visible parameters in order (globals, then each slot's): what a
- *  host sees. The host index is not the id. */
-inline int VisibleParamCount() { return kNumGlobalParams + kSlots * kNumSlotParams; }
-inline int VisibleId(int index)
-{
-    if(index < 0)
-        return -1;
-    if(index < kNumGlobalParams)
-        return index;
-    index -= kNumGlobalParams;
-    const int slot = index / kNumSlotParams, p = index % kNumSlotParams;
-    return slot < kSlots ? SlotId(slot, p) : -1;
-}
-inline int VisibleIndexOf(int id)
+/** The global parameters a route can move besides the channels' (kModDests): continuous, not the tempo. */
+inline const int kModGlobalTargets[] = {gSwing, gVolume, gRevSize, gRevDecay, gRevDamping, gRevPreDelay, gRevWidth, gRevReturn, gGlue, gCeiling};
+/** A route can move this parameter: a channel's continuous one in kModDests, or one of kModGlobalTargets. */
+inline bool IsModTarget(int id)
 {
     int slot, p;
-    if(IsGlobalId(id))
-        return id < kNumGlobalParams ? id : -1;
-    if(IsSlotId(id, slot, p) && p < kNumSlotParams)
-        return kNumGlobalParams + slot * kNumSlotParams + p;
-    return -1;
+    if(IsSlotId(id, slot, p))
+        return ModDestStep(p) > 0;
+    for(int g : kModGlobalTargets)
+        if(g == id)
+            return true;
+    return false;
 }
+
+/** The ids a host sees, in order (globals, each slot's, the pool's): every id but the hidden ones and the
+ *  routes. Built once. */
+struct VisibleTable
+{
+    int count = 0, ids[kNumIds], index[kNumIds];
+    VisibleTable()
+    {
+        for(int id = 0; id < kNumIds; id++)
+        {
+            const uint32_t f = ParamInfo(id).flags;
+            index[id]        = (f & (pfHidden | pfNoHost)) ? -1 : count;
+            if(index[id] >= 0)
+                ids[count++] = id;
+        }
+    }
+};
+inline const VisibleTable& Visible()
+{
+    static const VisibleTable t;
+    return t;
+}
+inline int VisibleParamCount() { return Visible().count; }
+inline int VisibleId(int index) { return index >= 0 && index < Visible().count ? Visible().ids[index] : -1; }
+inline int VisibleIndexOf(int id) { return id >= 0 && id < kNumIds ? Visible().index[id] : -1; }
+/** Saved with the patch (Save, Load, presets): every id but the hidden ones, the routes too. */
+inline bool IsSaved(int id) { return id >= 0 && id < kNumIds && !(ParamInfo(id).flags & pfHidden); }
 
 inline float ClampParam(int id, float v)
 {

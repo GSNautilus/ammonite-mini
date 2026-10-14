@@ -62,7 +62,7 @@ class BassGen
             case kBassWalk:
             {
                 // the change this step leads into: the progression's, or the bar's while it is off
-                const double cb   = kProgs[cx.prog].n > 0 ? kChangeBeats[cx.change] : 4.0;
+                const double cb   = cx.prog.n > 0 ? kChangeBeats[cx.change] : 4.0;
                 const double next = (std::floor(h.start / cb) + 1.0) * cb;
                 if(h.start + h.stepSmp * clk.bps >= next - 1e-6)
                 {

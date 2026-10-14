@@ -23,6 +23,8 @@ extern "C" {
 #define AMMO_SLOTS    16
 #define AMMO_WAVE_LEN 128
 #define AMMO_POLY     6   /* voices per channel */
+#define AMMO_LFOS     32  /* the modulation pool's LFOs */
+#define AMMO_ROUTES   128 /* its routes */
 
 typedef struct AmmoClock
 {
@@ -37,7 +39,7 @@ typedef struct AmmoParamInfo
     int      id;
     char     name[48];
     char     symbol[32];
-    char     group[16]; /* "global" or "slot 1".."slot 16" */
+    char     group[16]; /* "global", "slot 1".."slot 16", or "pool" (the modulation pool: LFOs, macros 5..16, routes) */
     float    min, max, def;
     int      steps;     /* > 0: stepped, with that many values */
     uint32_t flags;     /* ammo::ParamFlags */
@@ -74,12 +76,18 @@ typedef struct AmmoFrame
     float    masterRms, masterPeak;
     float    glueGr, limitGr; /* the master bus: the deepest gain reduction in the block, dB */
     AmmoChannelFrame ch[AMMO_SLOTS];
+    /* the modulation pool, at the block's last modulation update: */
+    uint32_t lfoRun;             /* bit l: LFO l ran (in use, or a live route takes it) */
+    float    lfo[AMMO_LFOS];     /* each LFO now, -1..1 (0 when it did not run) */
+    float    route[AMMO_ROUTES]; /* per route, its target's position in its range after modulation (0..1), -1: not live */
+    float    cpu;  /* the engine's time rendering this block over the block's length in real time (1: all of it) */
 } AmmoFrame;
 
 AMMO_API void*  ammo_create(double sampleRate, int maxBlock);
 AMMO_API void   ammo_destroy(void* engine);
-AMMO_API int    ammo_param_count(void);
-AMMO_API int    ammo_param_info(int index, AmmoParamInfo* out);
+AMMO_API int    ammo_param_count(void);                          /* the host's parameters (no routes, nothing hidden) */
+AMMO_API int    ammo_param_info(int index, AmmoParamInfo* out);  /* by host index */
+AMMO_API int    ammo_param_info_id(int id, AmmoParamInfo* out);  /* by id: any id, hidden ones and routes too (0: none) */
 AMMO_API int    ammo_param_step_name(int id, int step, char* buf, int cap);
 AMMO_API void   ammo_set_param(void* engine, int id, float value);
 AMMO_API float  ammo_get_param(void* engine, int id);
@@ -94,7 +102,7 @@ AMMO_API int         ammo_latency(void* engine); /* samples the output lags the 
 AMMO_API int         ammo_preset_count(void);
 AMMO_API const char* ammo_preset_name(int k);
 AMMO_API const char* ammo_preset_blurb(int k);
-AMMO_API int         ammo_apply_preset(void* engine, int k); /* every visible parameter: the preset's value or the default */
+AMMO_API int         ammo_apply_preset(void* engine, int k); /* every saved parameter (the routes too): the preset's value or the default */
 
 /* recording the master output to a 32-bit float stereo WAV (engine/Record.hpp): a thread drains the engine's
  * tap into the file while ammo_process runs, as the plugin's UI does */

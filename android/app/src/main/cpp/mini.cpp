@@ -7,9 +7,9 @@
    (0..1 of the time it had), kept as the mean and the worst over the last second and the worst since start, with
    Oboe's xrun count (the dropouts).
 
-   Bench: a fresh engine on a thread pinned the same way renders 10 s offline in 192-frame blocks for three
-   patches (the default preset; 16 channels with every effect on; 16 chord channels) and reports the time each
-   took, as a share of real time.
+   Bench: a fresh engine on a thread pinned the same way renders 10 s offline in 192-frame blocks for four
+   patches (the default preset; 16 channels with every effect on; 16 chord channels; the second with the whole
+   modulation pool live: 32 LFOs, 128 routes) and reports the time each took, as a share of real time.
 
    The bridge (bridge/Bridge.hpp) on the same engine: the page's messages in, JavaScript out through the Kotlin
    host's eval; its transport decides whether the callback runs the engine or outputs silence. Every bridge call
@@ -88,6 +88,27 @@ void patchChords(void* e) // 16 chord channels, 9ths in steps
     for(int s = 0; s < AMMO_SLOTS; s++) { set(e, "gen", s, 2); set(e, "chord_notes", s, 2); set(e, "chord_rhythm", s, 1); }
     set(e, "sync", -1, 1);
 }
+void patchPool(void* e) // patchFull and the whole modulation pool live: 32 LFOs, 128 routes (tests/engine/test_mod.py's CPU check)
+{
+    using namespace ammo;
+    patchFull(e);
+    for(int l = 0; l < kPoolLfos; l++)
+    {
+        const float v[kLfoParamsUsed] = {1.f, (float)(l % 7), l % 2 ? 0.f : 1.f, 0.3f + 0.01f * l, (float)(4 + l % 10), 0.f, (float)(l % 17)};
+        for(int k = 0; k < kLfoParamsUsed; k++) ammo_set_param(e, LfoId(l, k), v[k]);
+    }
+    static const char* const slotTargets[]   = {"cutoff", "tune", "pan", "shape", "level", "rev_send", "dly_mix", "reso"};
+    static const char* const globalTargets[] = {"swing", "volume", "rev_size", "rev_decay", "rev_damp", "rev_pre", "rev_width", "rev_return"};
+    auto route = [e](int r, int src, int target, float amt, int pol) {
+        ammo_set_param(e, RouteId(r, rSrc), (float)src); ammo_set_param(e, RouteId(r, rTarget), (float)target);
+        ammo_set_param(e, RouteId(r, rAmt), amt); ammo_set_param(e, RouteId(r, rPol), (float)pol);
+    };
+    int r = 0;
+    for(int s = 0; s < AMMO_SLOTS - 1; s++) // 15 channels x 8 targets, then 8 global ones: 128
+        for(const char* t : slotTargets) { route(r, r % 4 ? kSrcLfo1 + r % kPoolLfos : kSrcMacro1 + r % kPoolMacros, paramId(t, s), 0.1f, r % 2); r++; }
+    for(const char* t : globalTargets) { route(r, kSrcLfo1 + r % kPoolLfos, paramId(t, -1), 0.05f, 1); r++; }
+    for(int m = 0; m < kPoolMacros; m++) ammo_set_param(e, MacroId(m), 0.5f);
+}
 
 /* ---------------------------------------------------------------- the fastest cores */
 std::vector<int> bigCores()
@@ -124,7 +145,8 @@ public:
     // keep AAudio's low latency without MMAP). exclusive = true: MMAP allowed and asked for, to try it again.
     bool exclusive = false;
     bool hint = true; // Android's performance hint (ADPF, through Oboe): the callback's times keep the clocks up
-    int patch = 0; // what start() plays: 0 the default, 1 sixteen channels with every effect, 2 sixteen chord channels
+    int patch = 0; // what start() plays: 0 the default, 1 sixteen channels with every effect, 2 sixteen chord channels,
+                   // 3 the first with the whole modulation pool live
     /** The engine to play, and the bridge whose transport says whether it plays (before start). */
     void attach(void* engine, ammo::Bridge* bridge) { engine_ = engine; bridge_ = bridge; }
     std::string start()
@@ -338,7 +360,7 @@ JNIEXPORT void JNICALL Java_com_ammonite_mini_Native_create(JNIEnv* env, jclass,
     gHost.pick     = env->GetMethodID(c, "pick", "(ZLjava/lang/String;)V");
     gHost.recorded = env->GetMethodID(c, "recorded", "(Ljava/lang/String;Z)V");
     gEngine        = ammo_create(48000, kMaxBlock);
-    (gPlayer.patch == 1 ? patchFull : gPlayer.patch == 2 ? patchChords : patchDefault)(gEngine);
+    (gPlayer.patch == 1 ? patchFull : gPlayer.patch == 2 ? patchChords : gPlayer.patch == 3 ? patchPool : patchDefault)(gEngine);
     AmmoBridgeHost h{nullptr, &hostEval, &hostPick, &hostRecorded, &hostLog};
     gBridge = new ammo::Bridge(*static_cast<ammo::Engine*>(gEngine), h, str(env, recordDir));
     gPlayer.attach(gEngine, gBridge);
@@ -403,10 +425,12 @@ JNIEXPORT jstring JNICALL Java_com_ammonite_mini_Native_bench(JNIEnv* env, jclas
     out += benchOne("default (First light)", patchDefault) + "\n";
     out += benchOne("16 ch, every effect", patchFull) + "\n";
     out += benchOne("16 chord channels", patchChords) + "\n";
+    out += benchOne("16 ch, fx, whole pool", patchPool) + "\n";
     out += benchOne("default, again", patchDefault) + "\n";
     // the live callback's size (a burst, 96 frames): what a block costs beyond its samples
     out += benchOne("16 ch, every effect", patchFull, 96) + "\n";
-    out += benchOne("16 chord channels", patchChords, 96);
+    out += benchOne("16 chord channels", patchChords, 96) + "\n";
+    out += benchOne("16 ch, fx, whole pool", patchPool, 96);
     return env->NewStringUTF(out.c_str());
 }
 }

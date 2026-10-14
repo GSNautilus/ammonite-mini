@@ -15,6 +15,7 @@ struct ConductorParams
     int   sync = 0; // 0 host, 1 internal
     float swing = 0.f;
     int   root = 9, scale = 1, prog = 0, change = 1, chord = 0, restart = 0, octave = 0;
+    int   progLen = 4, progStep[kProgSteps] = {0, 3, 4, 0}; // Progression = Custom
 };
 
 class Conductor
@@ -40,17 +41,20 @@ class Conductor
         }
         else if(p.sync == 1 || !haveHost_)
             bpm_ = p.tempo;
-        const bool playing = useHost && host->playing;
+        // playing: the host's transport, followed for its beat only in Host sync (Internal keeps its own beat and
+        // tempo but still shows play / stop, and the page's pulse runs with it)
+        const bool playing = host != nullptr && host->valid && host->playing;
         clk.bpm     = bpm_;
         clk.bps     = bpm_ / 60.0 / (double)sr_;
-        clk.beat0   = playing ? host->beat : beat_;
+        clk.beat0   = useHost && playing ? host->beat : beat_;
         clk.frames  = frames;
         clk.playing = playing;
         clk.swing   = (double)Clamp01(p.swing) / 3.0; // not smoothed: timing stays identical for any block size
         beat_       = clk.beat0 + clk.bps * (double)frames;
         clk_      = clk;
 
-        chordNow_ = ChordAt(clk.lastBeat(), p.prog, p.change, p.chord, &progPos_);
+        prog_     = ProgOf(p.prog, p.progLen, p.progStep);
+        chordNow_ = ChordAt(clk.lastBeat(), prog_, p.change, p.chord, &progPos_);
         harmony_.Update(p.scale, chordNow_);
     }
 
@@ -58,7 +62,7 @@ class Conductor
     const BlockClock& clock() const { return clk_; }
     int    chordNow() const { return chordNow_; }
     int    progPos() const { return progPos_; }
-    int    progLen() const { return kProgs[p_.prog].n; }
+    int    progLen() const { return prog_.n; }
     bool   hasHostClock() const { return haveHost_; }
     double beat() const { return beat_; }
     const ConductorParams& params() const { return p_; }
@@ -69,7 +73,7 @@ class Conductor
         cx.harmony      = h;
         cx.key          = p_.scale;
         cx.tonic        = p_.root;
-        cx.prog         = p_.prog;
+        cx.prog         = prog_;
         cx.change       = p_.change;
         cx.manualChord  = p_.chord;
         cx.restart      = p_.restart;
@@ -84,6 +88,7 @@ class Conductor
     bool            haveHost_ = false;
     BlockClock      clk_;
     Harmony         harmony_;
+    Prog            prog_ = kProgs[0];
     int             chordNow_ = 0, progPos_ = -1;
 };
 

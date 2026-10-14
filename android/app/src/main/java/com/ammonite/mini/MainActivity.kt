@@ -32,7 +32,7 @@ import java.io.File
  *    evaluateJavascript. Ticks: one per display frame (Choreographer), sent only when the engine has published.
  *  - Patch files: Android's pickers (Save: ACTION_CREATE_DOCUMENT, Open: ACTION_OPEN_DOCUMENT).
  *  - Recordings: the app's own Music folder (phase 3 copies them out).
- *  - adb extras for the bench: --ez bench true (results in logcat, tag AmmoMini), --ei patch 1|2, --ez hint false,
+ *  - adb extras for the bench: --ez bench true (results in logcat, tag AmmoMini), --ei patch 1|2|3, --ez hint false,
  *    --ez exclusive true (an exclusive stream: silent on the SM-P620). */
 class MainActivity : Activity(), Native.Host {
     private lateinit var web: WebView

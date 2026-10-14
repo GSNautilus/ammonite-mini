@@ -102,6 +102,17 @@ check(len(t) >= 3 and abs(np.median(np.diff(t)) - 60 / 110) < 0.002,
       f"Sync Internal: the host is ignored, Tempo 110 (every {1000 * np.median(np.diff(t)):.1f} ms)")
 e.close()
 
+# Internal is the default; it keeps its own tempo and beat but shows the host's play / stop (the page's button, the pulse)
+e = Engine()
+e.solo_arp(0, "Loop", "1/4", octave=3, bpm=100, dec=DEC_30MS)
+e.frames()
+_, _, on = e.render(0.5, clock=(True, 90.0, 40.0), collect=True)
+_, _, off = e.render(0.5, clock=(False, 90.0, 40.0), collect=True)
+check(e.get("sync") == 1 and on[-1].playing == 1 and off[-1].playing == 0 and abs(on[-1].bpm - 100) < 1e-6 and on[-1].beat < 2.0,
+      f"default Sync Internal: Tempo 100 against the host's 90 ({on[-1].bpm:.0f}), its own beat ({on[-1].beat:.2f}, not the host's 40), "
+      f"playing {on[-1].playing} / {off[-1].playing} with the host's transport")
+e.close()
+
 # ---- telemetry follows the clock
 e = Engine()
 e.solo_arp(0, "Loop", "1/4", octave=3, bpm=120, dec=DEC_30MS)

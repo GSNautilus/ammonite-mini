@@ -167,7 +167,7 @@ class ChordGen
     static constexpr long long kNoWin = (-9223372036854775807LL - 1);
 
     /** The chord's window in beats: the change, or a bar while the progression is off. */
-    static double WindowBeats(const StepContext& cx) { return kProgs[cx.prog].n > 0 ? kChangeBeats[cx.change] : 4.0; }
+    static double WindowBeats(const StepContext& cx) { return cx.prog.n > 0 ? kChangeBeats[cx.change] : 4.0; }
 
     /** RHYTHM Arp: the step's note of the voiced chord (see the top). */
     int Arpeggiate(const BlockClock& clk, const ArpParams& a, const ChordParams& c, const StepContext& cx,

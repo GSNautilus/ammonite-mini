@@ -141,6 +141,25 @@ check(fr[-1].progLen == 4 and fr[-1].progPos == 3 and fr[-1].chordRootPc == 5,
       f"telemetry: progression {fr[-1].progPos + 1}/{fr[-1].progLen}, chord root pitch class {fr[-1].chordRootPc} (F = 5)")
 e.close()
 
+# ---- Custom: the progression from its step degrees, as long as its length says; the rest are ignored
+e = Engine()
+e.solo_arp(0, "Up", "1/8", length=16, pool="Triad", rng=1, dec=0.5, sus=1.0, gate=1.0, octave=1)
+e.set("root", 0)
+e.set("scale", SCALES.index("Major"))
+e.set("prog", PROGS.index("Custom"))
+e.set("change", 1)  # 1 bar
+e.set("prog_len", 3)
+for i, d in enumerate([1, 4, 0, 6]):  # ii V I (the 4th, vii, is past the length)
+    e.set(f"prog_s{i + 1}", d)
+got = pitches(e, 32, base=MIDI_BASE + 12)  # 4 bars: ii V I and round to ii again
+bars = [sorted(set(got[8 * b:8 * b + 8])) for b in range(4)]
+check(bars == [[2, 5, 9], [7, 11, 14], [0, 4, 7], [2, 5, 9]],
+      f"Custom ii V I, length 3, in C major: bars {bars} (want Dm, G, C, Dm)")
+fr = e.frames()
+check(fr[-1].progLen == 3 and fr[-1].progPos == 0 and fr[-1].chordDeg == 1,
+      f"telemetry: progression {fr[-1].progPos + 1}/{fr[-1].progLen}, degree {fr[-1].chordDeg} (ii = 1)")
+e.close()
+
 # ---- a chord key: Min7 with Key pool = the chord tones; Pop moves it in parallel
 e = Engine()
 e.solo_arp(0, "Up", "1/8", length=16, pool="Key", rng=1, dec=0.5, sus=1.0, gate=1.0, octave=1)

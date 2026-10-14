@@ -103,6 +103,28 @@ for label, slots in [("default patch (3 channels)", 3), ("16 channels", 16)]:
     check(dt < 2.0, f"CPU {label}: 10 s of audio in {dt:.2f} s ({100 * dt / 10:.1f} % of real time)")
     e.close()
 
+# ---- the CPU meter: every frame carries its block's render time over the block's length, plausible, and close to
+# what the wall clock measures from outside (the meter leaves out only the calls' overhead)
+e = Engine()
+e.render(0.5)
+e.frames()
+t0 = time.perf_counter()
+_, _, fr = e.render(4.0, block=512, collect=True)
+dt = time.perf_counter() - t0
+cpu = np.array([f.cpu for f in fr])
+check(len(fr) == -(-int(4.0 * SR) // 512) and np.all(np.isfinite(cpu)) and np.all(cpu > 0) and np.all(cpu < 1.0),
+      f"CPU meter, default patch at 512-sample blocks: every frame filled, mean {100 * cpu.mean():.2f} %, peak {100 * cpu.max():.2f} %")
+check(cpu.mean() <= dt / 4.0 * 1.05, f"CPU meter: mean {100 * cpu.mean():.2f} % within the wall clock's {100 * dt / 4.0:.2f} % of real time")
+e.close()
+e = Engine()
+for s in range(16):
+    e.set("gen", 1, s)
+e.render(0.5)
+e.frames()
+cpu16 = np.array([f.cpu for f in e.render(2.0, block=512, collect=True)[2]])
+check(cpu16.mean() > cpu.mean(), f"CPU meter: 16 channels {100 * cpu16.mean():.2f} % over the default patch's {100 * cpu.mean():.2f} %")
+e.close()
+
 # ---- state: a changed patch survives save / load with identical audio
 a = Engine()
 a.set("tempo", 95)

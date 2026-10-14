@@ -21,6 +21,7 @@ struct VoiceParams
     float filtAmount = 0.f, filtA = 0.f, filtD = 0.4f;
     float pitchAmount = 0.f, pitchD = 0.3f;
     float glide = 0.f;
+    float tuneCents = 0.f; // FINE TUNE: on the pitch, with the PITCH envelope
 };
 
 class SynthVoice
@@ -44,12 +45,19 @@ class SynthVoice
         gate_  = 0;
         ctrl_  = 0;
         level_ = 0.f;
+        fresh_ = true;
     }
 
     /** Per block, before Process: the smoothed parameter values. */
     void SetParams(const VoiceParams& p)
     {
-        p_ = p;
+        // the times only when they move (modulation sets the parameters every kModBlock samples)
+        const bool same = !fresh_ && p.ampA == p_.ampA && p.ampD == p_.ampD && p.ampS == p_.ampS && p.ampR == p_.ampR &&
+                          p.filtA == p_.filtA && p.filtD == p_.filtD && p.pitchD == p_.pitchD && p.glide == p_.glide;
+        p_     = p;
+        fresh_ = false;
+        if(same)
+            return;
         amp_.SetTimes(AttackSeconds(p.ampA), DecaySeconds(p.ampD), p.ampS, DecaySeconds(p.ampR), sr_);
         // the modulation envelopes advance once per control tick
         fenv_.SetTimes(AttackSeconds(p.filtA), DecaySeconds(p.filtD), sr_ / (float)kCtrl);
@@ -124,7 +132,7 @@ class SynthVoice
     {
         midi_ += (target_ - midi_) * glideCoef_;
         const float pitchEnv = penv_.Next() * p_.pitchAmount * 12.f;
-        const float hz       = MidiToHz(midi_ + pitchEnv);
+        const float hz       = MidiToHz(midi_ + pitchEnv + p_.tuneCents * 0.01f);
         const float det      = std::exp2(p_.detuneCents / 1200.f);
         oscA_.SetFreq(hz, sr_);
         oscB_.SetFreq(hz * det, sr_);
@@ -142,6 +150,7 @@ class SynthVoice
     AdEnv       fenv_, penv_;
     float       midi_ = 60.f, target_ = 60.f, glideCoef_ = 1.f, level_ = 0.f;
     int         gate_ = 0, ctrl_ = 0;
+    bool        fresh_ = true; // SetParams computes the times the first time whatever they are
     uint32_t    samples_ = 0, lastWrap_ = 0;
 };
 

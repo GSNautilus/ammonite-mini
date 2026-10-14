@@ -140,18 +140,17 @@ AMMO_API int ammo_apply_preset(void* engine, int k)
 {
     if(k < 0 || k >= ammo::kNumPresets)
         return 0;
-    for(int i = 0; i < ammo::VisibleParamCount(); i++)
-    {
-        const int id = VisibleId(i);
-        E(engine)->SetParam(id, ammo::PresetValue(k, id));
-    }
+    for(int id = 0; id < ammo::kNumIds; id++) // every saved parameter, the routes too
+        if(ammo::IsSaved(id))
+            E(engine)->SetParam(id, ammo::PresetValue(k, id));
     return 1;
 }
 
-AMMO_API int ammo_param_info(int index, AmmoParamInfo* out)
+AMMO_API int ammo_param_info(int index, AmmoParamInfo* out) { return ammo_param_info_id(VisibleId(index), out); }
+
+AMMO_API int ammo_param_info_id(int id, AmmoParamInfo* out)
 {
-    const int id = VisibleId(index);
-    if(id < 0 || out == nullptr)
+    if(id < 0 || id >= ammo::kNumIds || out == nullptr)
         return 0;
     const ammo::ParamDef& d = ammo::ParamInfo(id);
     std::memset(out, 0, sizeof *out);
@@ -171,7 +170,7 @@ AMMO_API int ammo_param_info(int index, AmmoParamInfo* out)
     {
         CopyStr(out->name, sizeof out->name, d.name);
         CopyStr(out->symbol, sizeof out->symbol, d.symbol);
-        CopyStr(out->group, sizeof out->group, "global");
+        CopyStr(out->group, sizeof out->group, ammo::IsPoolId(id) ? "pool" : "global");
     }
     out->min   = d.min;
     out->max   = d.max;

@@ -13,6 +13,30 @@ DLL_PATH = os.environ.get("AMMO_ENGINE_DLL") or os.path.join(BUILD, "cmake", "bi
 SLOTS, WAVE_LEN = 16, 128
 GLOBAL_IDS, SLOT_STRIDE = 64, 128
 SR = 48000
+# the modulation pool (engine/Params.hpp): 32 LFOs of 8 ids, the macros' in-use flags and values 5..16, 128 routes of 4
+POOL_BASE, NUM_IDS = 2112, 3136
+POOL_LFOS, POOL_MACROS, POOL_ROUTES = 32, 16, 128
+LFO_BASE, LFO_STRIDE = 2112, 8
+MACRO_ON_BASE, MACRO_VAL_BASE = 2368, 2384
+ROUTE_BASE, ROUTE_STRIDE = 2400, 4
+LFO_KEYS = ["on", "shape", "sync", "rate", "div", "phase", "restart"]
+ROUTE_KEYS = ["src", "target", "amt", "pol"]
+SRC_LFO1, SRC_MACRO1 = 1, 33  # a route's source: 0 off, 1..32 LFO 1..32, 33..48 Macro 1..16
+
+
+def lfo_id(l, key):
+    """Id of pool LFO l's (0-based) setting by name (LFO_KEYS)."""
+    return LFO_BASE + LFO_STRIDE * l + LFO_KEYS.index(key)
+
+
+def route_id(r, key):
+    """Id of pool route r's (0-based) field by name (ROUTE_KEYS)."""
+    return ROUTE_BASE + ROUTE_STRIDE * r + ROUTE_KEYS.index(key)
+
+
+def macro_id(m):
+    """Id of macro m's (0-based) value: macros 1..4 are global ids 11..14."""
+    return 11 + m if m < 4 else MACRO_VAL_BASE + m
 
 fails = []
 
@@ -50,7 +74,8 @@ class AmmoFrame(C.Structure):
                 ("chordRootPc", C.c_int), ("chordDeg", C.c_int), ("chordQuality", C.c_int), ("progPos", C.c_int),
                 ("progLen", C.c_int), ("keyMask", C.c_int), ("chordMask", C.c_int), ("instance", C.c_int),
                 ("sampleRate", C.c_double), ("block", C.c_uint32), ("masterRms", C.c_float), ("masterPeak", C.c_float), ("glueGr", C.c_float), ("limitGr", C.c_float),
-                ("ch", AmmoChannelFrame * SLOTS)]
+                ("ch", AmmoChannelFrame * SLOTS), ("lfoRun", C.c_uint32), ("lfo", C.c_float * POOL_LFOS),
+                ("route", C.c_float * POOL_ROUTES), ("cpu", C.c_float)]
 
 
 if not os.path.exists(DLL_PATH):
@@ -63,6 +88,7 @@ DLL.ammo_create.argtypes = [C.c_double, C.c_int]
 DLL.ammo_destroy.argtypes = [C.c_void_p]
 DLL.ammo_param_count.restype = C.c_int
 DLL.ammo_param_info.argtypes = [C.c_int, C.POINTER(AmmoParamInfo)]
+DLL.ammo_param_info_id.argtypes = [C.c_int, C.POINTER(AmmoParamInfo)]
 DLL.ammo_param_step_name.argtypes = [C.c_int, C.c_int, C.c_char_p, C.c_int]
 DLL.ammo_set_param.argtypes = [C.c_void_p, C.c_int, C.c_float]
 DLL.ammo_get_param.restype = C.c_float
@@ -85,11 +111,18 @@ for i in range(DLL.ammo_param_count()):
     PARAMS[pi.symbol.decode()] = pi
 
 GLOBAL = {p.symbol.decode(): p.id for p in INFOS if p.group == b"global"}
+POOL = {p.symbol.decode(): p.id for p in INFOS if p.group == b"pool"}  # the host's part of it: no routes
 SLOT_PARAMS = {}  # bare symbol -> offset in the slot block
 for p in INFOS:
     if p.group.startswith(b"slot 1") and p.group == b"slot 1":
         sym = p.symbol.decode().split("_", 1)[1]
         SLOT_PARAMS[sym] = p.id - GLOBAL_IDS
+
+
+def info_id(id_):
+    """Any id's definition (hidden ones and the routes too), or None."""
+    pi = AmmoParamInfo()
+    return pi if DLL.ammo_param_info_id(id_, C.byref(pi)) else None
 
 
 def pid(name, slot=None):
@@ -111,8 +144,10 @@ DIVS = ["4/1", "2/1", "1/1", "1/2.", "1/2", "1/4.", "1/4", "1/4T", "1/8.", "1/8"
 DIV_BEATS = [16, 8, 4, 3, 2, 1.5, 1, 2 / 3, 0.75, 0.5, 1 / 3, 0.25, 1 / 6, 0.125]
 SCALES = ["Major", "Minor", "Dorian", "Phrygian", "Lydian", "Mixolydian", "Harmonic minor", "Pentatonic",
           "Pentatonic minor", "Blues", "Maj", "Min", "Sus2", "Sus4", "Maj7", "Min7", "Dom7", "Dim", "Aug", "Add9"]
-PROGS = ["Off", "Pop", "50s", "Sad", "Epic", "Jazz", "Vamp", "Canon", "Fall"]
+PROGS = ["Off", "Pop", "50s", "Sad", "Epic", "Jazz", "Vamp", "Canon", "Fall", "Custom"]
 MIDI_BASE = 36
+LFO_SHAPES = ["Sine", "Triangle", "Saw up", "Saw down", "Square", "Random", "Drift"]
+LFO_DIVS = ["16/1", "8/1", "4/1", "2/1", "1/1", "1/2.", "1/2", "1/4.", "1/4", "1/4T", "1/8.", "1/8", "1/8T", "1/16", "1/16T", "1/32"]
 
 
 class Engine:
@@ -141,6 +176,18 @@ class Engine:
 
     def get_id(self, id_):
         return float(DLL.ammo_get_param(self.p, id_))
+
+    def lfo(self, l, shape="Sine", sync="Tempo", rate=0.5, div="1/4", phase=0.0, restart=0, on=1):
+        """Pool LFO l (0-based): in use, its settings (LFO_SHAPES, LFO_DIVS; restart 0 Free, n the notes of channel n)."""
+        for k, v in (("on", on), ("shape", LFO_SHAPES.index(shape)), ("sync", 1 if sync == "Tempo" else 0), ("rate", rate),
+                     ("div", LFO_DIVS.index(div)), ("phase", phase), ("restart", restart)):
+            self.set_id(lfo_id(l, k), v)
+
+    def route(self, r, src, target, amt, pol=1):
+        """Pool route r (0-based): source (0 off, SRC_LFO1 + l, SRC_MACRO1 + m), target id (-1 none), amount, polarity
+        (1 Bipolar, 0 Unipolar)."""
+        for k, v in (("src", src), ("target", target), ("amt", amt), ("pol", pol)):
+            self.set_id(route_id(r, k), v)
 
     def all_off(self):
         """Every slot's generator off: silence, a clean start for one voice."""

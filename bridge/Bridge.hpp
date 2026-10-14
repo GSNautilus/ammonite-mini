@@ -1,10 +1,10 @@
 /** Ammonite Mini's bridge: between the page and the engine, with no platform code (docs/MINI_PLAN.md section 3).
- *  The portable part of desktop's AmmoniteUI.cpp (ammonite efc533a): the page's one-line messages in, the
+ *  The portable part of desktop's AmmoniteUI.cpp (ammonite 69f0980): the page's one-line messages in, the
  *  JavaScript to run out. The platform does the rest through AmmoBridgeHost's callbacks: run JS in the page,
  *  show a Save or Open picker, hear of a finished recording, log.
  *
  *  Page -> bridge: ready | set <id> <v> | edit <id> <0|1> | preset <k> | save <json> | open | record <0|1> |
- *                  key <down> <vk> <repeat> | log ...
+ *                  key <down> <vk> <repeat> | log ... | gl ... (logged) | outputs, output <id> (ignored)
  *  Bridge -> page: ammo.params([...]) ammo.values([[id,v],...]) ammo.presets([{n,b}], k, file) ammo.page("json")
  *                  ammo.rec({...}) ammo.toast("text") ammo.info({}) ammo.tick([...], host)
  *
@@ -12,6 +12,9 @@
  *  - Ticks fold the frames of many small blocks (the tablet's 96-frame bursts: 500 a second) into at most six,
  *    hits and ducking kept, and only the last carries the waves (Bridge.cpp, Tick).
  *  - Parameters go straight to the engine (there is no plugin host to tell); `edit` is accepted and ignored.
+ *    The modulation routes (no host's parameters on desktop, where the plugin's "routes" state follows them)
+ *    are set the same way, and the engine's patch text saves them with the rest.
+ *  - No output devices (desktop's standalone host sends `ammo.outputs`): Android routes the audio.
  *  - The transport is the bridge's: the clock is always the engine's internal one, which never stops, so
  *    play / stop (Space: key 32) is a state here that the audio callback reads (Playing()): stopped, it
  *    outputs silence and leaves the engine where it was. Ticks report it as `p`.
@@ -89,6 +92,7 @@ class Bridge
     std::string       pageJson_;    // the page's state for the next save
     static constexpr uint32_t kRead = 32, kSend = 6; // a tick reads the whole telemetry ring, sends at most six
     AmmoFrame         read_[kRead], send_[kSend], last_;
+    float             cpuPeak_[kSend] = {}; // the worst block folded into each frame sent
     bool              haveLast_ = false, told_ = true; // told_: the page has seen the transport as it is
     WavWriter         wav_;
     std::string       recPath_;

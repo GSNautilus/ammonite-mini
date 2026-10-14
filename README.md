@@ -6,30 +6,36 @@ stage, laid out for touch.
 
 ## Where it came from
 
-A snapshot of the `ammonite` repo, branch `desktop`, commit `efc533a`
-(2026-10-06, "Desktop phase 4: bloom, the last stage FX"):
+The `ammonite` repo, branch `desktop`:
 
-| here | there |
-|---|---|
-| `engine/` | `desktop/engine/` |
-| `web/` | `desktop/plugin/web/` |
-| `tests/engine/` | `desktop/test/tests/engine/` |
-
-From here on the two copies are separate. Engine fixes made in `ammonite`
-are carried across by hand when they matter; note each one here.
-
-Changes to `engine/` since the snapshot:
-
-| date | file | change |
+| here | there | as of |
 |---|---|---|
-| 2026-10-07 | `Engine.cpp` | `ScopedFlushToZero` on ARM64 (FPCR.FZ); x86 unchanged |
+| `engine/` | `desktop/engine/` | `69f0980` (2026-10-13), identical |
+| `tests/engine/` | `desktop/test/tests/engine/` | `69f0980`, identical |
+| `web/` | `desktop/plugin/web/` | `efc533a` (2026-10-06), adapted for touch (phase 0) |
+| `bridge/` | from `desktop/plugin/AmmoniteUI.cpp` | `69f0980` |
+
+**The engine is identical to `ammonite`'s `desktop/engine` at `69f0980`**,
+copied whole with its tests: the modulation pool (32 LFOs, 16 macros, 128
+routes), version 3 patches (version 2 ones convert on load), the Custom
+progression, Fine tune, the CPU meter's field in the telemetry. Mini's one
+engine change (2026-10-07: `ScopedFlushToZero` on ARM64, FPCR.FZ) now lives
+upstream, so there is nothing to re-apply: to update, copy both folders
+again and run `mini.ps1 test`. Engine fixes are made in `ammonite`.
+
+The page is still the `efc533a` one: it ignores what it does not know (the
+pool, the custom steps, the new telemetry). It is replaced by the shared
+page (one page in `ammonite` with a Mini mode: `docs/MINI_PLAN.md`, "LFOs
+and modulation").
 
 ## Status
 
 The app plays on the tablet: the page full screen in a WebView, driving the
 engine through the bridge (`bridge/`), sound through Oboe (phases 0-2).
-Patch files and recordings are wired but not finished (phase 3). The build
-plan and its status: `docs/MINI_PLAN.md`.
+Patch files and recordings are wired but not finished (phase 3). Desktop's
+engine with the modulation pool (2026-10-13) passes its tests on Windows
+and compiles for the tablet, but has not been on it yet. The build plan and
+its status: `docs/MINI_PLAN.md`.
 
 ## Building and testing (Windows)
 

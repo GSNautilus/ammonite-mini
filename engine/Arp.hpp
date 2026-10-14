@@ -46,7 +46,8 @@ struct ArpEvent
 struct StepContext
 {
     const Harmony* harmony; // the harmony object to update for the step's chord (scratch)
-    int            key, tonic, prog, change, manualChord, restart, masterOctave;
+    Prog           prog;    // the progression playing (none: the manual chord)
+    int            key, tonic, change, manualChord, restart, masterOctave;
 };
 
 class Arp

@@ -4,7 +4,15 @@
  *  drones (arp OFF) become Loop at 1/1, gate 1, sustain 1, glide; the
  *  hardware's DELAY SEND becomes the channel's delay MIX (its power-on
  *  divisions 1/8., 1/4, 1/8T per oscillator), its REV SEND the reverb send;
- *  its LFOs have no counterpart yet.
+ *  its LFOs a pool LFO on a route (Slow tide's slow filter).
+ *
+ *  The macros do the same in every preset (Mod.hpp routes, at 0 they change
+ *  nothing, so the levelling holds): BLOOM opens the filters, SPACE sends
+ *  more into the reverb, GRIT drives a channel or two, MOTION thickens the
+ *  patterns (density); a preset marks the macros it routes in use. Pool
+ *  routes 4 s + 1 .. 4 s + 4 belong to channel s + 1 (section 7's four per
+ *  channel): 3 and 4 hold Bloom and Space; 1 and 2 an LFO, or Grit and
+ *  Motion. The LFOs are numbered per preset from 1.
  *
  *  Levelled (package B3): every preset plays at about -18 dB (a K-weighted
  *  level, test_presets.py) through its TRIM, a factor on every channel's
@@ -12,6 +20,7 @@
 #pragma once
 
 #include "Channel.hpp" // the generators' enums (Arp, Chord, Bass)
+#include "Mod.hpp"
 #include "Params.hpp"
 
 namespace ammo {
@@ -48,6 +57,35 @@ constexpr float kAtt1s = 0.830f, kAtt300 = 0.686f;
         AMMO_S(slot, cAmpSustain, 1.f), AMMO_S(slot, cAmpAttack, kAtt300), AMMO_S(slot, cAmpRelease, kDec900), \
         AMMO_S(slot, cGlide, 0.7f)
 
+/** Pool route 4 slot + r (r 1..4: the slot's own, as section 7's four): source, the slot parameter it moves, amount;
+ *  bipolar (the default). */
+#define AMMO_ROUTE(slot, r, src, param, amt)                                                                              \
+    {RouteId(4 * (slot) + (r) - 1, rSrc), (float)(src)}, {RouteId(4 * (slot) + (r) - 1, rTarget), (float)SlotId(slot, param)}, \
+        {RouteId(4 * (slot) + (r) - 1, rAmt), (float)(amt)}
+/** Pool LFO l (1..32), in use: Free at RATE (0..1, LfoHz), or Tempo at a division (kLfoDivNames), and its phase. */
+#define AMMO_LFO_FREE(l, shape, rate, phase)                                                                    \
+    {LfoId((l) - 1, lOn), 1.f}, {LfoId((l) - 1, lShape), (float)(shape)}, {LfoId((l) - 1, lSync), 0.f},          \
+        {LfoId((l) - 1, lRate), (float)(rate)}, {LfoId((l) - 1, lPhase), (float)(phase)}
+#define AMMO_LFO_TEMPO(l, shape, div, phase)                                                                    \
+    {LfoId((l) - 1, lOn), 1.f}, {LfoId((l) - 1, lShape), (float)(shape)}, {LfoId((l) - 1, lSync), 1.f},          \
+        {LfoId((l) - 1, lDiv), (float)(div)}, {LfoId((l) - 1, lPhase), (float)(phase)}
+/** The source code of pool LFO l (1..32). */
+#define AMMO_LFO(l) (kSrcLfo1 + (l) - 1)
+/** Macro m (1..16) in use (the page lists it). */
+#define AMMO_MACRO_ON(m) {MacroOnId((m) - 1), 1.f}
+/** Bloom (Macro 1) opens the filter, Space (Macro 3) sends into the reverb: routes 3 and 4. A drum's Bloom is its Tone. */
+#define AMMO_MACROS(slot)                                                                                        \
+    AMMO_ROUTE(slot, 3, kSrcMacro1, cCutoff, 0.3f), AMMO_ROUTE(slot, 4, kSrcMacro1 + 2, cRevSend, 0.45f), AMMO_MACRO_ON(1), \
+        AMMO_MACRO_ON(3)
+#define AMMO_MACROS_DRUM(slot)                                                                                     \
+    AMMO_ROUTE(slot, 3, kSrcMacro1, cDrumTone, 0.35f), AMMO_ROUTE(slot, 4, kSrcMacro1 + 2, cRevSend, 0.3f), AMMO_MACRO_ON(1), \
+        AMMO_MACRO_ON(3)
+/** Grit (Macro 4) on the channel's drive, Motion (Macro 2) on its density: route r. */
+#define AMMO_GRIT(slot, r)   AMMO_ROUTE(slot, r, kSrcMacro1 + 3, cFxDrive, 0.6f), AMMO_MACRO_ON(4)
+#define AMMO_MOTION(slot, r) AMMO_ROUTE(slot, r, kSrcMacro1 + 1, cArpDensity, 0.45f), AMMO_MACRO_ON(2)
+// the LFO divisions by name (kLfoDivNames)
+constexpr int kLfo4Bars = 2, kLfo2Bars = 3, kLfo1Bar = 4, kLfoHalf = 6;
+
 // The levelling (package B3): per preset a trim on every channel's level, so that each plays at about -18 dB
 // K-weighted (test_presets.py measures it) through the default GLUE (0.3).
 constexpr float kTrimFirst = 1.02f, kTrimTide = 0.62f, kTrimClockwork = 1.13f, kTrimDub = 1.16f, kTrimJazz = 0.93f,
@@ -71,6 +109,7 @@ inline const PresetEntry kPresetFirstLight[] = {
     AMMO_S(2, cArpLength, 6), AMMO_S(2, cArpDensity, 0.6f), AMMO_S(2, cOctave, 2), AMMO_S(2, cDegree, 4), AMMO_S(2, cLevel, 0.6f),
     AMMO_S(2, cShape, kSoft), AMMO_S(2, cAmpSustain, 0.f), AMMO_S(2, cAmpDecay, 0.536f), AMMO_S(2, cAmpRelease, 0.536f),
     AMMO_S(2, cPan, 0.4f),
+    AMMO_MACROS(0), AMMO_MACROS(1), AMMO_MACROS(2), AMMO_GRIT(0, 1), AMMO_MOTION(1, 1), AMMO_MOTION(2, 1),
 };
 
 inline const PresetEntry kPresetTide[] = {
@@ -83,6 +122,12 @@ inline const PresetEntry kPresetTide[] = {
     AMMO_DRONE(2), AMMO_S(2, cShape, kSine), AMMO_S(2, cDetune, 12.f), AMMO_S(2, cCutoff, 0.55f), AMMO_S(2, cLevel, 0.6f),
     AMMO_S(2, cOctave, 2), AMMO_S(2, cDegree, 4), AMMO_S(2, cPan, 0.f), AMMO_S(2, cAmpAttack, kAtt1s),
     AMMO_S(0, cRevSend, 0.6f), AMMO_S(1, cRevSend, 0.6f), AMMO_S(2, cRevSend, 0.6f), AMMO_G(gRevDecay, 0.55f), AMMO_G(gRevSize, 0.7f),
+    // the recipe's slow filter: LFO CUTOFF DEPTH 35 on each (+-1 octave), at the hardware's 0.09, 0.13 and 0.17 Hz,
+    // a third of a cycle apart: three LFOs, one per drone
+    AMMO_LFO_FREE(1, kLfoSine, 0.218f, 0.f), AMMO_ROUTE(0, 1, AMMO_LFO(1), cCutoff, 0.105f),
+    AMMO_LFO_FREE(2, kLfoSine, 0.271f, 0.333f), AMMO_ROUTE(1, 1, AMMO_LFO(2), cCutoff, 0.105f),
+    AMMO_LFO_FREE(3, kLfoSine, 0.31f, 0.667f), AMMO_ROUTE(2, 1, AMMO_LFO(3), cCutoff, 0.105f),
+    AMMO_MACROS(0), AMMO_MACROS(1), AMMO_MACROS(2),
 };
 
 inline const PresetEntry kPresetClockwork[] = {
@@ -101,6 +146,7 @@ inline const PresetEntry kPresetClockwork[] = {
     AMMO_S(2, cLevel, 0.6f), AMMO_S(2, cAmpDecay, kDec150), AMMO_S(2, cAmpRelease, kDec150), AMMO_S(2, cAmpSustain, 0.f),
     AMMO_S(2, cCutoff, 0.45f), AMMO_S(2, cReso, 0.5f), AMMO_S(2, cFiltEnvAmount, 0.5f), AMMO_S(2, cFiltDecay, kDec150),
     AMMO_S(1, cDelayDiv, kDelay4), AMMO_S(1, cDelayMix, 0.35f), // the recipe's delay send on OSC 2
+    AMMO_MACROS(0), AMMO_MACROS(1), AMMO_MACROS(2), AMMO_MOTION(0, 1), AMMO_MOTION(1, 1), AMMO_MOTION(2, 1), AMMO_GRIT(0, 2),
 };
 
 inline const PresetEntry kPresetDub[] = {
@@ -115,6 +161,10 @@ inline const PresetEntry kPresetDub[] = {
     // the echo: dotted eighths, feedback 70, send 60, tone 1.5 kHz, width 100 (ping-pong); rev send 30
     AMMO_S(0, cDelayDiv, kDelay8Dot), AMMO_S(0, cDelayFeedback, 0.7f), AMMO_S(0, cDelayMix, 0.6f), AMMO_S(0, cDelayDamping, 0.654f),
     AMMO_S(0, cDelayPingPong, 1), AMMO_S(0, cRevSend, 0.3f),
+    // the stab's filter breathes over two bars
+    AMMO_LFO_TEMPO(1, kLfoTriangle, kLfo2Bars, 0.f), AMMO_ROUTE(0, 1, AMMO_LFO(1), cCutoff, 0.08f),
+    // the stab is a band-pass into a dark echo: its Bloom also lifts the echo's damping (the echoes come back brighter)
+    AMMO_MACROS(0), AMMO_ROUTE(0, 2, kSrcMacro1, cDelayDamping, -0.55f), AMMO_MACROS(2),
 };
 
 inline const PresetEntry kPresetJazz[] = {
@@ -129,6 +179,7 @@ inline const PresetEntry kPresetJazz[] = {
     AMMO_S(2, cArpRange, 2), AMMO_S(2, cArpVary, 0.3f), AMMO_S(2, cOctave, 2), AMMO_S(2, cDegree, 0), AMMO_S(2, cShape, 0.4f),
     AMMO_S(2, cLevel, 0.6f), AMMO_S(2, cAmpDecay, 0.536f), AMMO_S(2, cAmpRelease, 0.536f), AMMO_S(2, cAmpSustain, 0.f), AMMO_S(2, cPan, 0.3f),
     AMMO_S(1, cRevSend, 0.35f), AMMO_S(2, cRevSend, 0.35f),
+    AMMO_MACROS(0), AMMO_MACROS(1), AMMO_MACROS(2), AMMO_MOTION(2, 1),
 };
 
 inline const PresetEntry kPresetBells[] = {
@@ -145,6 +196,7 @@ inline const PresetEntry kPresetBells[] = {
     AMMO_S(2, cPitchEnvAmount, 1.f), AMMO_S(2, cPitchDecay, 0.1f), AMMO_S(2, cPan, 0.3f),
     AMMO_S(2, cDelayDiv, kDelay8T), AMMO_S(2, cDelayMix, 0.3f), AMMO_S(1, cRevSend, 0.45f), AMMO_S(2, cRevSend, 0.45f),
     AMMO_G(gRevDecay, 0.55f),
+    AMMO_MACROS(0), AMMO_MACROS(1), AMMO_MACROS(2), AMMO_MOTION(2, 1),
 };
 
 inline const PresetEntry kPresetBand[] = {
@@ -164,6 +216,9 @@ inline const PresetEntry kPresetBand[] = {
     AMMO_S(2, cPan, 0.3f),
     AMMO_S(0, cRevSend, 0.3f), AMMO_S(2, cRevSend, 0.35f), AMMO_S(2, cDelayDiv, kDelay8Dot), AMMO_S(2, cDelayMix, 0.25f),
     AMMO_S(0, cChorusOn, 1), AMMO_S(0, cChorusMix, 0.4f),
+    // the pad opens and closes over four bars (section 7's global LFO 1 as it came: a sine four bars long)
+    AMMO_LFO_TEMPO(1, kLfoSine, kLfo4Bars, 0.f), AMMO_ROUTE(0, 1, AMMO_LFO(1), cCutoff, 0.07f),
+    AMMO_MACROS(0), AMMO_MACROS(1), AMMO_MACROS(2), AMMO_GRIT(1, 2), AMMO_MOTION(2, 1),
 };
 
 /** A drum channel: the Rhythm generator on the drum voice. */
@@ -191,6 +246,10 @@ inline const PresetEntry kPresetGroove[] = {
     // the kick ducks the bass and the stabs; the stabs and the clap in a short room
     AMMO_S(4, cDuckSource, 1), AMMO_S(4, cDuckAmount, 0.5f), AMMO_S(5, cDuckSource, 1), AMMO_S(5, cDuckAmount, 0.6f),
     AMMO_S(5, cRevSend, 0.3f), AMMO_S(1, cRevSend, 0.2f), AMMO_G(gRevDecay, 0.35f), AMMO_G(gRevSize, 0.35f),
+    // the hats breathe: their tone rises and falls over two bars
+    AMMO_LFO_TEMPO(1, kLfoSine, kLfo2Bars, 0.75f), AMMO_ROUTE(2, 1, AMMO_LFO(1), cDrumTone, 0.15f),
+    AMMO_MACROS_DRUM(0), AMMO_MACROS_DRUM(1), AMMO_MACROS_DRUM(2), AMMO_MACROS_DRUM(3), AMMO_MACROS(4), AMMO_MACROS(5),
+    AMMO_GRIT(4, 1), AMMO_MOTION(2, 2), AMMO_MOTION(5, 1),
 };
 #undef AMMO_DRUM
 
@@ -215,6 +274,11 @@ inline const PresetEntry kPresetBloom[] = {
     AMMO_S(2, cPan, 0.3f), AMMO_S(2, cDelayDiv, kDelay4Dot), AMMO_S(2, cDelayFeedback, 0.7f), AMMO_S(2, cDelayDamping, 0.6f),
     AMMO_S(2, cDelayPingPong, 1), AMMO_S(2, cDelayMix, 0.5f), AMMO_S(2, cRevSend, 0.5f),
     AMMO_G(gRevSize, 0.8f), AMMO_G(gRevDecay, 0.7f), AMMO_G(gRevDamping, 0.4f),
+    // the chord's filter drifts slowly (a Drift LFO, a new turn every two bars); the high notes wander side to side
+    // (two LFOs: Drift draws from LFO 1's seed, which is section 7's channel 1 LFO 1's, so it drifts as it did)
+    AMMO_LFO_TEMPO(1, kLfoDrift, kLfo2Bars, 0.f), AMMO_ROUTE(0, 1, AMMO_LFO(1), cCutoff, 0.08f),
+    AMMO_LFO_TEMPO(2, kLfoSine, kLfo4Bars, 0.25f), AMMO_ROUTE(2, 1, AMMO_LFO(2), cPan, 0.3f),
+    AMMO_MACROS(0), AMMO_MACROS(1), AMMO_MACROS(2), AMMO_MOTION(2, 2),
 };
 
 #define AMMO_PRESET(name, blurb, arr, trim) {name, blurb, arr, (int)(sizeof(arr) / sizeof(arr[0])), trim}
@@ -256,5 +320,14 @@ inline float PresetValue(int k, int id)
 #undef AMMO_S
 #undef AMMO_G
 #undef AMMO_DRONE
+#undef AMMO_ROUTE
+#undef AMMO_LFO_FREE
+#undef AMMO_LFO_TEMPO
+#undef AMMO_LFO
+#undef AMMO_MACRO_ON
+#undef AMMO_MACROS
+#undef AMMO_MACROS_DRUM
+#undef AMMO_GRIT
+#undef AMMO_MOTION
 
 } // namespace ammo

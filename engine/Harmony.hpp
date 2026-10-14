@@ -192,12 +192,14 @@ struct Harmony
 };
 
 /* ------------------------------------------------------------ progression */
+constexpr int kProgSteps  = 8; // the most chords a progression holds
+constexpr int kProgCustom = 9; // Progression = Custom: the eight step parameters
 struct Prog
 {
     int n;
-    int deg[8];
+    int deg[kProgSteps];
 };
-inline const Prog kProgs[9] = {
+inline const Prog kProgs[kProgCustom] = {
     {0, {0}},                      // Off: the Chord parameter
     {4, {0, 4, 5, 3}},             // Pop    I V vi IV
     {4, {0, 5, 3, 4}},             // 50s    I vi IV V
@@ -208,6 +210,19 @@ inline const Prog kProgs[9] = {
     {8, {0, 4, 5, 2, 3, 0, 3, 4}}, // Canon  I V vi iii IV I IV V
     {4, {0, 6, 5, 4}},             // Fall   i VII VI v (in minor)
 };
+
+/** The progression PROG plays: a library one, or (Custom) the first `len`
+ *  of the user's degrees `steps`. */
+inline Prog ProgOf(int prog, int len, const int* steps)
+{
+    if(prog != kProgCustom)
+        return kProgs[prog < 0 || prog >= kProgCustom ? 0 : prog];
+    Prog p;
+    p.n = len < 1 ? 1 : (len > kProgSteps ? kProgSteps : len);
+    for(int i = 0; i < kProgSteps; i++)
+        p.deg[i] = steps[i] < 0 ? 0 : (steps[i] > 6 ? 6 : steps[i]);
+    return p;
+}
 inline const double kChangeBeats[4] = {2.0, 4.0, 8.0, 16.0}; // 1/2, 1, 2, 4 bars
 constexpr double    kBeatEps        = 1e-7;                   // a step on a bar line belongs to it
 
@@ -219,9 +234,8 @@ enum Restart
 };
 
 /** The chord degree at master-clock position `beat`. */
-inline int ChordAt(double beat, int prog, int change, int manualChord, int* progPos = nullptr)
+inline int ChordAt(double beat, const Prog& pr, int change, int manualChord, int* progPos = nullptr)
 {
-    const Prog& pr = kProgs[prog];
     if(pr.n == 0)
     {
         if(progPos)

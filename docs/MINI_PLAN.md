@@ -119,6 +119,55 @@ engine and the page this started from.
   work, a knob turn has no felt delay, presets switch cleanly. Next: phase 3
   (Save / Open are wired to the pickers already; the round trip with
   desktop, and recordings out to Music).
+- 2026-10-13, **the port, step 1: desktop's engine, and the bridge to
+  match** (`ammonite` `PHASE4_BREADTH.md` 8.8, decision 1). Done without
+  the tablet.
+  - `ammonite` `69f0980` (branch `desktop`): Mini's ARM64 flush-to-zero
+    added to desktop's `Engine.cpp` (x86 unchanged, every engine test
+    passes there). `engine/` and `tests/engine/` are now copies of
+    `desktop/engine` and `desktop/test/tests/engine` at that commit,
+    byte for byte (there were no Mini test changes to keep); README.
+  - The bridge, from `AmmoniteUI.cpp` `efc533a..69f0980`:
+    - `ready` sends every saved id (1852: the 1340 host parameters and the
+      128 x 4 route ids), as desktop now does; a preset or an opened file
+      sets them all, routes included.
+    - `set` takes the route ids too, straight into the engine (desktop
+      also writes them to the plugin's `routes` state for a DAW; Mini has
+      none: the engine's patch text carries them, version 3).
+    - Ticks gain `lf` (the LFOs that ran: `{index: -1..1}`), `rt` (the
+      live routes' positions: `{route: 0..1}`) and `cpu` (the engine's time
+      over the block's), desktop's fields. A frame that folds several
+      blocks (section 0, phase 2) carries their length-weighted mean as
+      `cpu` and their worst as **`cpk`** (Mini's own field); `lf` and `rt`
+      are its last block's.
+    - Not taken: the output device (`outputs`, `output <id>`,
+      `ammo.outputs`: desktop's standalone host's; ignored here, and the
+      page shows no picker without `ammo.outputs`), and the DAW-only
+      `stateChanged` / `setState`. `gl ...` lines are logged.
+    - `tests/bridge/test_bridge.py` covers all of it (the table, route
+      `set` and clamping, `lf` / `rt` / `cpu` / `cpk`, folded frames
+      against an engine read block by block, a route through save and
+      open, the desktop-only messages).
+  - `mini.cpp`: a fourth bench patch, "16 ch, fx, whole pool" (16 channels
+    with every effect, 32 LFOs, 128 routes, as `test_mod.py`'s CPU check),
+    and `--ei patch 3` plays it live.
+  - Checked: `mini.ps1 test` (12 engine files, the bridge) passes; the
+    whole pool costs 6.9 % of real time on the PC (engine's meter 6.7 %).
+    `mini.ps1 apk` builds (arm64-v8a, the native code recompiled with
+    `-Wall`: one warning, `hostClockSeen_` unused, as before). The current
+    page, fed the new bridge's own output (ready, Slow tide, 4 s of ticks)
+    in headless Edge: no errors, it plays (waves, chords); it lists the
+    Custom progression but draws it as one chord, with no step editor.
+  - **Waits for the tablet:**
+    1. `mini.ps1 bench`: the new "16 ch, fx, whole pool" row against
+       "16 ch, every effect" (desktop: the whole pool is 7 % of one x86
+       core), at 192 and 96 frames.
+    2. The pool live: `--ei patch 3` with the page running, a minute or
+       two (xruns, the callback's load).
+    3. A 10-minute run of the default patch with no dropout, as phase 1.
+    4. The presets by ear, the ten of them: their LFOs and macro routes
+       are new to the tablet (Slow tide's three LFOs, Dub echoes, Evening
+       band, Night groove, Slow bloom).
 
 ## 1. What it is
 
@@ -134,8 +183,9 @@ scaling).
 ## 2. Decided
 
 - **A separate repo.** A snapshot of `ammonite` at `efc533a` (branch
-  `desktop`); engine fixes are carried across by hand and noted in the
-  README. Local only for now: no GitHub.
+  `desktop`). Since 2026-10-13 the engine is a plain copy of desktop's
+  (README), refreshed by copying it again; the page follows when it is
+  shared (section 6, "LFOs and modulation"). Local only for now: no GitHub.
 - **A native app:** Kotlin, an Android WebView with the page in it, the engine
   through the NDK and JNI, and Oboe (AAudio) for audio. It has the same shape
   as the desktop: C++ engine, web page, one-line string messages.
@@ -162,7 +212,7 @@ scaling).
    |  JNI: strings in, strings out
  bridge/ C++, no platform code: the desktop's AmmoniteUI.cpp logic
    |  (OnMessage, SendParams/Values/Presets, Tick, PageLine)
- engine/ C++ (unchanged snapshot) <- Oboe audio callback (an A78 core)
+ engine/ C++ (desktop's, copied whole) <- Oboe audio callback (an A78 core)
 ```
 
 - **bridge/** is the portable part of `desktop/plugin/AmmoniteUI.cpp`, pulled
@@ -196,11 +246,11 @@ scaling).
 Repo layout when built:
 
 ```
-engine/          the snapshot (changes noted in README)
+engine/          desktop's engine, copied whole (README names the commit)
 bridge/          Bridge.hpp / Bridge.cpp
 web/             the page (index.html, app.js, app.css, knobs.js, dev.html, fake-engine.js)
 android/         Gradle project: app/ (Kotlin), app/src/main/cpp/CMakeLists.txt -> ../../engine, ../../bridge
-tests/engine/    the desktop's engine tests, unchanged
+tests/engine/    the desktop's engine tests, copied with it
 tests/bridge/    the bridge, headless (ctypes, as the engine tests)
 CMakeLists.txt   Windows: the engine + bridge DLL for the tests (MSVC + Ninja, as desktop)
 mini.ps1         build | test | apk | install | run | serve | shot | log
@@ -342,7 +392,9 @@ heard without a felt delay, and presets switch cleanly.
   `PHASE4_BREADTH.md` 8.8): (1) copy desktop's `engine/` whole, re-apply
   this repo's engine changes (the table in `README.md`), give the bridge
   what `AmmoniteUI.cpp` gained (`lf`, `rt`, `lfoRun`, `cpu`, the route
-  messages), bench the full pool on the tablet; (2) **the page is shared**:
+  messages), bench the full pool on the tablet (**done 2026-10-13** but
+  for the tablet steps, section 0; the ARM64 change went upstream instead
+  of being re-applied); (2) **the page is shared**:
   one page in `ammonite` with a Mini mode doing what phase 0 did here, which
   this repo takes as it is (no more porting page features by hand);
   (3) **the scope is full screen**: a Scope view from the top bar, the
@@ -350,6 +402,17 @@ heard without a felt delay, and presets switch cleanly.
   open; its GPU path brought back without the 3D form, stage FX measured
   on the tablet, a 2D canvas as the fallback. Tablet steps wait for the
   user to switch the tablet on.
+  **What the shared page's Mini mode needs to know** of this bridge
+  (`bridge/Bridge.hpp`): `ammo.info` has `fmt: "android"` and the host
+  object is `window.ammoHost`; no `ammo.outputs` ever comes (desktop's
+  output picker stays hidden, `outputs` / `output` are ignored); ticks
+  carry at most six frames, waves in the last only, and a folded frame's
+  `cpu` is its blocks' mean, `cpk` their worst (the CPU meter's peak
+  should read `cpk` when there is one); `h` is always 0 and the
+  transport is the bridge's (`key 1 32 0` toggles, ticks say `p`); routes
+  are set by `set <id> <v>` like any parameter and saved by the engine's
+  patch text (no `routes` state, no re-send of values after a project
+  load); `edit` is ignored; `gl ...` is logged.
 
 ## 7. Working rules
 
