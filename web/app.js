@@ -136,7 +136,8 @@
 
   /* The stage's own controls: parameters of the page, not the engine. They live in the same table (ids from
      VBASE up, past the engine's 2112) so knobs, chips, drags and resets work on them unchanged, but they never
-     go to the host: they are kept with the rest of the page's state in localStorage. New ones go at the end of
+     go to the host: they are kept with the rest of the page's state in localStorage. Their continuous knobs are
+     modulation targets as the engine's are (a route names the id; the page applies it: pageMod). New ones go at the end of
      their list (an id is its place in it). The camera's are here too (see the camera, below the motion layer);
      Yaw and Lie have no knob. */
   var VBASE = 4096, VSLOT = VBASE + 16, VSTRIDE = 8;
@@ -1035,7 +1036,7 @@
       a unit. Bipolar shows ± (∓ for a negative amount: the LFO turned upside down), one way its sign. Keyed by the
       parameter's symbol: [units per whole range (0: the range itself), unit, decimals]. */
   var MOD_UNITS = { cutoff: [Math.log(1000) / Math.LN2, ' oct', 1], filt_amt: [8, ' oct', 1], tune: [0, ' ct', 0], detune: [0, ' ct', 0],
-                    pitch_amt: [24, ' st', 1], drum_tune: [0, ' st', 1], pan: [200, '% L/R', 0], ceiling: [0, ' dB', 1] };
+                    pitch_amt: [24, ' st', 1], drum_tune: [0, ' st', 1], pan: [200, '% L/R', 0], ceiling: [0, ' dB', 1], v_tilt: [0, '°', 0] };
   function amtText(target, amt, bi) {
     var d = ORDER[target], u = d && MOD_UNITS[d.s], x = amt * (u ? u[0] || d.max - d.min : 100), s = Math.abs(x).toFixed(u ? u[2] : 0);
     return (+s === 0 ? '' : bi ? (x < 0 ? '∓' : '±') : x < 0 ? '−' : '+') + s + (u ? u[1] : '%');
@@ -1043,9 +1044,12 @@
   /** A route as its tag reads: "L1 ±5.0 oct"; and in full, as the knob's value line reads while it is dragged. */
   function tagText(rt) { return srcShort(rt.src) + ' ' + amtText(rt.target, rt.amt, bip(rt)); }
   function routeLine(rt) { return srcName(rt.src) + ' ' + amtText(rt.target, rt.amt, bip(rt)); }
-  /** A route can move this control: a channel's continuous parameter, or one of the Conductor's in GLOBAL_TARGETS. */
+  /** A route can move this control: a channel's continuous parameter, one of the Conductor's in GLOBAL_TARGETS, or a
+      continuous knob of the page's own (the stage's look, camera, FX and scope, each channel's visual: see pageMod). */
+  var PAGE_NOMOD = { v_yaw: 1, v_lie: 1 }; // the camera's, with no knob
   function isTarget(id) {
-    var d = ORDER[id]; if (!d || !isHost(id)) return false;
+    var d = ORDER[id]; if (!d) return false;
+    if (!isHost(id)) return d.steps === 0 && !PAGE_NOMOD[d.s];
     return d.slot >= 0 ? DEST_SYMS.indexOf(d.s) >= 0 : GLOBAL_TARGETS.indexOf(d.s) >= 0 && id < 64;
   }
   /** Where a target lives, in plain words: "Channel 2 · Sustain", "Space · Size" (the knobs' own names, as the panel
@@ -1058,8 +1062,16 @@
                  cho_depth: 'Chorus depth', cho_mix: 'Chorus mix', dly_fb: 'Delay feedback', dly_damp: 'Delay damping', dly_mix: 'Delay mix', rev_send: 'Reverb send',
                  duck_amt: 'Duck amount', swing: 'Time · Swing', volume: 'Master · Volume', rev_size: 'Space · Size', rev_decay: 'Space · Decay',
                  rev_damp: 'Space · Damping', rev_pre: 'Space · Pre-delay', rev_width: 'Space · Width', rev_return: 'Space · Return', glue: 'Master · Glue',
-                 ceiling: 'Master · Ceiling' };
-  function targetName(id) { var d = ORDER[id], n = d && (TNAMES[d.s] || d.n); return !d ? '?' : d.slot >= 0 ? slotName(d.slot) + ' · ' + n : n; }
+                 ceiling: 'Master · Ceiling', v_presence: 'Presence', v_response: 'Response', v_cpulse: 'Visual pulse', v_detail: 'Detail', v_size: 'Size',
+                 v_alpha: 'Alpha', v_pdens: 'Particle density', v_pscat: 'Particle scatter', v_pjit: 'Particle jitter', v_pcol: 'Particle color jitter',
+                 v_psize: 'Point size', v_psoft: 'Point softness', v_pfill: 'Particle fill' };
+  function targetName(id) {
+    var d = ORDER[id]; if (!d) return '?';
+    var n = TNAMES[d.s] || d.n;
+    if (d.slot >= 0) return slotName(d.slot) + ' · ' + n;
+    if (!isHost(id)) for (var i = 0; i < PIN_GROUPS.length; i++) if (PIN_GROUPS[i][0].test(d.s)) return PIN_GROUPS[i][1] + ' · ' + d.n; // "Feedback · Zoom"
+    return n;
+  }
   /** The route table, read again when a route's value changed: every route {r, src, target, amt, uni, live} (by its
       number too), and by target those with one (live or at 0: a tag dragged to 0 stays). */
   var RTAB = { list: [], byTarget: {}, byR: {} }, rtDirty = true;
@@ -1107,20 +1119,48 @@
   var hotRoute = null;
   function modOf(id) {
     var list = routeTable().byTarget[id]; if (!list) return null;
-    var d = ORDER[id], x = (val(id) - d.min) / Math.max(1e-9, d.max - d.min), live = -1, rings = [];
+    var x = toPos(id, val(id)), live = -1, rings = [];
     function c01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
     list.forEach(function (rt) {
       if (!rt.live) return;
       var a = rt.amt, t = srcTone(rt.src), lo, hi, s;
       if (bip(rt)) { lo = x - Math.abs(a); hi = x + Math.abs(a); } // an LFO -1..1 around the knob
       else { lo = x + Math.min(0, a); hi = x + Math.max(0, a); } // a macro 0..1, or an LFO unipolar
-      if (rt.src >= SRC_M1) s = val(macroId(rt.src - SRC_M1));
-      else { s = F.lf[rt.src - SRC_LFO1]; if (s != null && rt.uni) s = (s + 1) / 2; }
+      s = srcNow(rt);
       rings.push({ r: rt.r, lo: c01(lo), hi: c01(hi), at: s == null ? -1 : c01(x + a * s), h: t.h, s: t.s, l: t.l });
       if (F.rt[rt.r] != null) live = F.rt[rt.r];
     });
+    if (!isHost(id) && VM[id] != null) live = toPos(id, VM[id]);
     return rings.length ? { rings: rings, live: live, hot: hotRoute } : null;
   }
+  /** A route's source now, as it adds to its target: a macro 0..1, an LFO from the telemetry (unipolar (s + 1) / 2), null
+      while the engine sends none for it. */
+  function srcNow(rt) {
+    if (rt.src >= SRC_M1) return val(macroId(rt.src - SRC_M1));
+    var s = F.lf[rt.src - SRC_LFO1];
+    return s == null ? null : rt.uni ? (s + 1) / 2 : s;
+  }
+  /** A value's position in its control's range, 0..1 along the knob (Zoom by ratios), and back. */
+  function toPos(id, v) { var d = ORDER[id]; return LOGP[d.s] ? Math.log(v / d.min) / Math.log(d.max / d.min) : (v - d.min) / Math.max(1e-9, d.max - d.min); }
+  function fromPos(id, x) { var d = ORDER[id]; return LOGP[d.s] ? d.min * Math.pow(d.max / d.min, x) : d.min + x * (d.max - d.min); }
+  /* Routes onto the page's own parameters: the engine leaves them be (they are not its targets), so the page applies
+     them as the engine applies its own (Mod.hpp), once a frame before the stage is drawn: each adds amount x source
+     to the knob's position in its range, the routes on one parameter add, the sum clamped. VM: those parameters'
+     values this frame by id, read by mg / mv (what the stage draws); val, gval and vval stay the knobs' own (what
+     the panel shows and saves). */
+  var VM = {};
+  function pageMod() {
+    var add = null, list = routeTable().list;
+    VM = {};
+    for (var i = 0; i < list.length; i++) {
+      var rt = list[i]; if (!rt.live || isHost(rt.target)) continue;
+      var s = srcNow(rt); if (s == null) continue;
+      add = add || {}; add[rt.target] = (add[rt.target] || 0) + rt.amt * s;
+    }
+    for (var id in add) VM[id] = fromPos(+id, Math.max(0, Math.min(1, toPos(+id, val(+id)) + add[id])));
+  }
+  function mg(sym) { var id = gid(sym); return VM[id] != null ? VM[id] : val(id); }
+  function mv(slot, sym) { var id = vsid(slot, sym); return VM[id] != null ? VM[id] : val(id); }
   /** + Add: the first free LFO (from its table defaults: a Tempo sine a bar long) or macro (at 0). */
   function addSource(lfo) {
     var n = lfo ? POOL_LFOS : POOL_MACROS;
@@ -2355,7 +2395,7 @@
       else { raw.moveTo(x, mid - c.wave[idx] * ra * A); drawn.moveTo(x, mid - m.out[idx] * da * A); }
     }
     ctx.strokeStyle = 'rgba(220,220,228,0.18)'; ctx.lineWidth = 1; ctx.stroke(raw);
-    Knobs.neon(ctx, drawn, hue, sat, Math.max(1.4, h / 70), (0.35 + 0.65 * Math.min(1, m.lvl)) * (0.2 + 0.8 * vval(slot, 'v_alpha'))); // as opaque as on the stage
+    Knobs.neon(ctx, drawn, hue, sat, Math.max(1.4, h / 70), (0.35 + 0.65 * Math.min(1, m.lvl)) * (0.2 + 0.8 * mv(slot, 'v_alpha'))); // as opaque as on the stage
     var top = 22, bot = h - 10, bh = bot - top;
     ctx.fillStyle = 'rgba(255,255,255,0.05)'; ctx.fillRect(mx + 4, top, 14, bh); ctx.fillRect(mx + 24, top, 6, bh);
     ctx.fillStyle = Knobs.hsla(hue, sat, 60, 0.85); ctx.fillRect(mx + 4, bot - bh * Math.min(1, m.lvl), 14, bh * Math.min(1, m.lvl));
@@ -2371,9 +2411,9 @@
     var g = fit2d(cv); if (!g) return;
     var ctx = g.ctx, w = g.w, h = g.h, m = MO[slot], hue = hueOfSlot(slot), i;
     pane(ctx, w, h);
-    var mid = h / 2 + 6, A = (h - 32) * 0.4, n = Math.round(30 + 400 * vval(slot, 'v_pdens')), sc = vval(slot, 'v_pscat'), cj = vval(slot, 'v_pcol');
-    var jit = vval(slot, 'v_pjit') * (0.25 + 0.75 * Math.min(1, m.lvl * 1.3)), pr = Math.max(0.6, vval(slot, 'v_psize') * 0.55), soft = vval(slot, 'v_psoft');
-    var da = Math.max(0.15, Math.min(1, m.lvl * presenceOf(slot))), al = 0.25 + 0.75 * vval(slot, 'v_alpha');
+    var mid = h / 2 + 6, A = (h - 32) * 0.4, n = Math.round(30 + 400 * mv(slot, 'v_pdens')), sc = mv(slot, 'v_pscat'), cj = mv(slot, 'v_pcol');
+    var jit = mv(slot, 'v_pjit') * (0.25 + 0.75 * Math.min(1, m.lvl * 1.3)), pr = Math.max(0.6, mv(slot, 'v_psize') * 0.55), soft = mv(slot, 'v_psoft');
+    var da = Math.max(0.15, Math.min(1, m.lvl * presenceOf(slot))), al = 0.25 + 0.75 * mv(slot, 'v_alpha');
     ctx.globalCompositeOperation = 'lighter';
     for (i = 0; i < n; i++) {
       var u = phash(i + 0.5), idx = Math.floor(((u * 2) % 1) * 128) % 128, f = 9 + 23 * phash(i + 7.1), ph = TAU * phash(i + 3.3);
@@ -2471,7 +2511,7 @@
                                                note: -1, x: 0, v: 0, lastHit: 0, hit: 0, dim: 1, vis: 1, swell: 0 };
   function lerp(a, b, t) { return a + (b - a) * t; }
   function ease(dt, tau) { return 1 - Math.exp(-dt / Math.max(1e-3, tau)); }
-  function presenceOf(s) { return 0.25 + 1.5 * vval(s, 'v_presence'); } // 0.25 .. 1 (middle) .. 1.75
+  function presenceOf(s) { return 0.25 + 1.5 * mv(s, 'v_presence'); } // 0.25 .. 1 (middle) .. 1.75
   /* a circular moving average of radius r: the wave is one cycle, so it wraps */
   function blur(src, dst, r) {
     if (r < 1) { dst.set(src); return; }
@@ -2481,18 +2521,18 @@
   }
 
   function motion(dt, now) {
-    var flow = gval('v_flow'), mot = Math.pow(4, 2 * gval('v_motion') - 1), nowS = now / 1000;
+    var flow = mg('v_flow'), mot = Math.pow(4, 2 * mg('v_motion') - 1), nowS = now / 1000;
     mo.drift += dt * mot;
     mo.run += ((F.playing ? 1 : 0) - mo.run) * ease(dt, 0.6);
-    var ph = F.beat / PULSE_BEATS[Math.round(gval('v_pdiv'))]; ph -= Math.floor(ph);
-    mo.pulse = Math.pow(0.5 + 0.5 * Math.cos(2 * Math.PI * ph), 3) * gval('v_pulse') * mo.run;
+    var ph = F.beat / PULSE_BEATS[Math.round(mg('v_pdiv'))]; ph -= Math.floor(ph);
+    mo.pulse = Math.pow(0.5 + 0.5 * Math.cos(2 * Math.PI * ph), 3) * mg('v_pulse') * mo.run;
     var anyOpen = false;
     for (var o in ui.open) if (ui.open[o] && sval(+o, 'gen') > 0) anyOpen = true;
     var focusDim = ui.focus && anyOpen && !ui.rail;
     var w = 2 * Math.PI * lerp(5, 1.6, flow), z = 0.3, steps = Math.max(1, Math.ceil(dt / 0.004)), hs = dt / steps;
     for (var s = 0; s < SLOTS; s++) {
       var c = CH[s], m = MO[s], i;
-      var resp = Math.pow(2, (vval(s, 'v_response') - 0.5) * 3.4); // 0.3x .. 1 .. 3.2x the Flow's times
+      var resp = Math.pow(2, (mv(s, 'v_response') - 0.5) * 3.4); // 0.3x .. 1 .. 3.2x the Flow's times
       var rise = lerp(0.015, 0.35, Math.pow(flow, 1.2)) * resp, fall = lerp(0.12, 2.2, flow) * resp, shapeT = lerp(0.02, 0.9, flow) * resp;
       var on = c.active && sval(s, 'gen') > 0, seen = sval(s, 'show') >= 0.5 && sval(s, 'mute') < 0.5 && !c.muted; // muted or hidden: off the stage
       var target = on ? Math.min(1, c.amp) : 0;
@@ -2503,7 +2543,7 @@
       for (i = 0; i < c.notes.length; i++) { var e = c.notes[i]; if (e.t > m.lastHit && e.t <= nowS) { m.lastHit = e.t; m.hit = 1; } }
       if (m.lvl < 0.002 && !on) { m.x = m.v = 0; m.swell = 0; continue; }
       // the shape
-      var a = ease(dt, shapeT), r = Math.round(Math.pow(1 - vval(s, 'v_detail'), 1.5) * 24), pk = 0;
+      var a = ease(dt, shapeT), r = Math.round(Math.pow(1 - mv(s, 'v_detail'), 1.5) * 24), pk = 0;
       for (i = 0; i < 128; i++) m.shape[i] += (c.wave[i] - m.shape[i]) * a;
       blur(m.shape, m.t1, r); blur(m.t1, m.out, r);
       for (i = 0; i < 128; i++) pk = Math.max(pk, Math.abs(m.out[i]));
@@ -2514,7 +2554,7 @@
       if (m.hit) m.v += w * 0.8;
       for (i = 0; i < steps; i++) { var acc = -w * w * m.x - 2 * z * w * m.v; m.v += acc * hs; m.x += m.v * hs; }
       m.x = Math.max(-1.5, Math.min(1.5, m.x));
-      m.swell = mo.pulse * vval(s, 'v_cpulse') + m.x * 0.5 * (1 - 0.4 * flow);
+      m.swell = mo.pulse * mv(s, 'v_cpulse') + m.x * 0.5 * (1 - 0.4 * flow);
     }
   }
 
@@ -2530,7 +2570,7 @@
   var CAM_NAMES = [['front', 'Front'], ['above', 'Above'], ['side', 'Side'], ['orbit', 'Orbit']];
   var CAM_VIEWS = { front: { v_tilt: 0, v_lie: 0, v_orbit: 0 }, above: { v_tilt: 90, v_lie: 0, v_orbit: 0 }, side: { v_tilt: 0, v_lie: 1, v_orbit: 0 },
                     orbit: { v_tilt: 17, v_lie: 0 } }; // orbit: turning again at the speed it had
-  var cam = { on: false, yaw: 0, yawT: 0, tilt: 17, zoom: 1, persp: 0.44, lie: 0, tau: 0.35, grab: null, lastOrbit: 0.4 };
+  var cam = { on: false, yaw: 0, yawT: 0, tilt: 17, zoom: 1, persp: 0.44, lie: 0, tau: 0.35, grab: null, lastOrbit: 0.4, vTilt: 17, vZoom: 1, vPersp: 0.44 };
   /** Aim the yaw at an angle the short way round, over tau seconds. */
   function camAim(rad, tau) {
     if (!cam || !cam.on) return;
@@ -2565,13 +2605,15 @@
   }
   function camera(dt) {
     if (!DEFS.v_tilt) return;
-    var tilt = gval('v_tilt'), zoom = gval('v_zoom'), persp = gval('v_persp'), lie = gval('v_lie');
+    var tilt = gval('v_tilt'), zoom = gval('v_zoom'), persp = gval('v_persp'), lie = gval('v_lie'); // the knobs (the routes on them: below)
     if (!cam.on) { cam.on = true; cam.yaw = cam.yawT = gval('v_yaw') * DEG; cam.tilt = tilt; cam.zoom = zoom; cam.persp = persp; cam.lie = lie; } // the first frame: there at once
-    if (!cam.grab) { var turn = ORBIT_K * Math.pow(gval('v_orbit'), 2) * dt; cam.yaw += turn; cam.yawT += turn; }
+    if (!cam.grab) { var turn = ORBIT_K * Math.pow(mg('v_orbit'), 2) * dt; cam.yaw += turn; cam.yawT += turn; }
     if (Math.abs(cam.yawT) > 1000) { var wrap = Math.round(cam.yawT / TAU) * TAU; cam.yaw -= wrap; cam.yawT -= wrap; }
     var a = ease(dt, cam.tau);
     cam.yaw += (cam.yawT - cam.yaw) * a; cam.tilt += (tilt - cam.tilt) * a; cam.zoom += (zoom - cam.zoom) * a;
     cam.persp += (persp - cam.persp) * a; cam.lie += (lie - cam.lie) * a;
+    // what the stage is seen from: the camera eased to the knobs, the routes on them on top (not eased: an LFO keeps its shape)
+    cam.vTilt = cam.tilt + mg('v_tilt') - tilt; cam.vZoom = cam.zoom * mg('v_zoom') / zoom; cam.vPersp = cam.persp + mg('v_persp') - persp;
   }
   /* on the stage (the panel above it keeps its own events; keys still go to the host); Mini has none */
   if (elStage) elStage.addEventListener('pointerdown', function (e) {
@@ -2604,14 +2646,14 @@
      panel moves), the whole form swelling a little on the pulse; each channel's particles; the stage FX. */
   var fxKick = 0;
   function drawStage(dt, LW, LH, freeW, cx, bh) {
-    var chans = [], flow = gval('v_flow'), drums = false, hit = 0;
+    var chans = [], flow = mg('v_flow'), drums = false, hit = 0;
     for (var s = 0; s < SLOTS; s++) {
       var c = CH[s], m = MO[s];
       if (m.lvl < 0.002 || m.vis < 0.004) continue;
       chans.push({ slot: s, bytes: m.bytes, hue: c.hue == null ? 90 : c.hue, sat: c.sat, rgb: null, amp: m.lvl, pres: presenceOf(s), swell: m.swell, look: lookOf(s),
-                   hit: m.hit, hitSeed: c.hitSeed, note: m.note, dim: m.dim, fade: m.vis, size: vval(s, 'v_size'), alpha: vval(s, 'v_alpha'),
-                   mode: Math.round(vval(s, 'v_mode')), pd: vval(s, 'v_pdens'), ps: vval(s, 'v_pscat'), pj: vval(s, 'v_pjit'), pc: vval(s, 'v_pcol'), pz: vval(s, 'v_psize'), pf: vval(s, 'v_psoft'),
-                   pfill: vval(s, 'v_pfill') });
+                   hit: m.hit, hitSeed: c.hitSeed, note: m.note, dim: m.dim, fade: m.vis, size: mv(s, 'v_size'), alpha: mv(s, 'v_alpha'),
+                   mode: Math.round(mv(s, 'v_mode')), pd: mv(s, 'v_pdens'), ps: mv(s, 'v_pscat'), pj: mv(s, 'v_pjit'), pc: mv(s, 'v_pcol'), pz: mv(s, 'v_psize'), pf: mv(s, 'v_psoft'),
+                   pfill: mv(s, 'v_pfill') });
       if (isDrum(s)) { drums = true; if (m.hit) hit = Math.max(hit, m.vis * m.dim); }
     }
     stageColors(chans, dt);
@@ -2620,8 +2662,8 @@
     var wantX = cx / LW * 2 - 1;
     stageX = stageX == null ? wantX : stageX + (wantX - stageX) * (1 - Math.exp(-dt / 0.12));
     var room = Math.min(freeW, LH - bh) / LH; // the room beside the panel and above the pin bar (bh: its height, 0 hidden)
-    try { Shells.draw(elStage, chans, { merge: ui.view === 'merged' ? 1 : 0, time: T, dt: dt, scale: Math.min(0.95, room * 0.92) * (1 + 0.03 * mo.pulse) * cam.zoom, zoom: cam.zoom, offX: stageX, offY: bh / LH,
-                                       spin: cam.yaw, tilt: cam.tilt * DEG, roll: cam.lie * Math.PI / 2, persp: cam.persp * 0.5, drift: mo.drift, ripple: { str: 0.12 * (1.15 - 0.7 * flow), spd: 2.2 * (1 - 0.55 * flow) },
+    try { Shells.draw(elStage, chans, { merge: ui.view === 'merged' ? 1 : 0, time: T, dt: dt, scale: Math.min(0.95, room * 0.92) * (1 + 0.03 * mo.pulse) * cam.vZoom, zoom: cam.vZoom, offX: stageX, offY: bh / LH,
+                                       spin: cam.yaw, tilt: cam.vTilt * DEG, roll: cam.lie * Math.PI / 2, persp: cam.vPersp * 0.5, drift: mo.drift, ripple: { str: 0.12 * (1.15 - 0.7 * flow), spd: 2.2 * (1 - 0.55 * flow) },
                                        fx: stageFx() }); } catch (e) { glStatus = 'draw error ' + e.message; }
   }
   /** COLOR, Palette and Cycle: each shown channel's rgb from the map. Palette: the channels in slot order spread
@@ -2631,12 +2673,12 @@
   var colPhase = 0;
   function stageColors(chans, dt) {
     if (!DEFS.col_mode) return;
-    var mode = Math.round(gval('col_mode')), map = Math.round(gval('col_map')), spread = gval('col_spread'), n = chans.length;
+    var mode = Math.round(mg('col_mode')), map = Math.round(mg('col_map')), spread = mg('col_spread'), n = chans.length;
     if (!mode) return;
-    colPhase = (colPhase + dt * 0.01 * Math.pow(50, gval('col_speed'))) % 1;
+    colPhase = (colPhase + dt * 0.01 * Math.pow(50, mg('col_speed'))) % 1;
     for (var i = 0; i < n; i++) {
       var pos = n > 1 ? i / (n - 1) : 0.5, t;
-      if (mode === 1) t = 0.5 + (pos - 0.5) * spread * 0.85 + gval('col_lvl') * 0.35 * Math.min(1, chans[i].amp * 1.3) - gval('col_lvl') * 0.12;
+      if (mode === 1) t = 0.5 + (pos - 0.5) * spread * 0.85 + mg('col_lvl') * 0.35 * Math.min(1, chans[i].amp * 1.3) - mg('col_lvl') * 0.12;
       else {
         var x = colPhase + spread * i / Math.max(1, n);
         t = COLMAPS[map] ? 1 - Math.abs(2 * (x % 1) - 1) : x % 1; // Rainbow comes round; the rest go back and forth
@@ -2649,12 +2691,12 @@
   function stageFx() {
     var fx = {};
     if (!DEFS.fx_mir) return fx;
-    if (gval('fx_mir') >= 0.5) fx.mirror = { div: Math.round(gval('fx_mir_div')), op: gval('fx_mir_op'), top: gval('fx_mir_top') >= 0.5 };
-    if (gval('fx_fb') >= 0.5) fx.feedback = { fade: 0.85 + 0.145 * Math.sqrt(Math.max(0.01, gval('fx_fb_amt'))),
-      zoom: 1.2 * gval('fx_fb_zoom') + 4 * gval('fx_fb_kick') * fxKick, rot: 1.5 * gval('fx_fb_rot'), dx: 0.5 * gval('fx_fb_dx'), dy: 0.5 * gval('fx_fb_dy'),
-      hue: Math.PI * gval('fx_fb_hue'), add: gval('fx_fb_blend') >= 0.5 };
-    if (gval('fx_tr') >= 0.5) fx.tracer = { n: Math.round(gval('fx_tr_n')), gap: Math.round(gval('fx_tr_gap')), fade: gval('fx_tr_fade') };
-    if (gval('fx_bl') >= 0.5) fx.bloom = { str: 2.5 * gval('fx_bl_str'), rad: gval('fx_bl_rad'), thr: 0.9 * gval('fx_bl_thr') };
+    if (mg('fx_mir') >= 0.5) fx.mirror = { div: Math.round(mg('fx_mir_div')), op: mg('fx_mir_op'), top: mg('fx_mir_top') >= 0.5 };
+    if (mg('fx_fb') >= 0.5) fx.feedback = { fade: 0.85 + 0.145 * Math.sqrt(Math.max(0.01, mg('fx_fb_amt'))),
+      zoom: 1.2 * mg('fx_fb_zoom') + 4 * mg('fx_fb_kick') * fxKick, rot: 1.5 * mg('fx_fb_rot'), dx: 0.5 * mg('fx_fb_dx'), dy: 0.5 * mg('fx_fb_dy'),
+      hue: Math.PI * mg('fx_fb_hue'), add: mg('fx_fb_blend') >= 0.5 };
+    if (mg('fx_tr') >= 0.5) fx.tracer = { n: Math.round(mg('fx_tr_n')), gap: Math.round(mg('fx_tr_gap')), fade: mg('fx_tr_fade') };
+    if (mg('fx_bl') >= 0.5) fx.bloom = { str: 2.5 * mg('fx_bl_str'), rad: mg('fx_bl_rad'), thr: 0.9 * mg('fx_bl_thr') };
     return fx;
   }
   /* ------------------------------------------------------------ the scope
@@ -2687,8 +2729,8 @@
     else { if (scope.lab) scope.lab.style.display = 'none'; drawStage(dt, LW, LH, freeW, cx, bh); }
   }
   function drawLanes(dt, LW, LH, freeW, cx, bh) {
-    var t1 = performance.now(), sm = gval('sc_smooth'), a = sm < 0.005 ? 1 : ease(dt, 0.35 * sm * sm), cyc = Math.round(gval('sc_cyc'));
-    var gain = gval('sc_gain'), tru = gval('sc_lvl') >= 0.5, lanes = [], tot = 0, s, i;
+    var t1 = performance.now(), sm = mg('sc_smooth'), a = sm < 0.005 ? 1 : ease(dt, 0.35 * sm * sm), cyc = Math.round(mg('sc_cyc'));
+    var gain = mg('sc_gain'), tru = mg('sc_lvl') >= 0.5, lanes = [], tot = 0, s, i;
     // the room: the stage beside the panel, its edges sliding there when the panel moves
     var L = cx - freeW / 2 + SC_PAD, R = cx + freeW / 2 - SC_PAD, k = scope.x0 == null ? 1 : ease(dt, 0.12);
     scope.x0 = scope.x0 == null ? L : scope.x0 + (L - scope.x0) * k; scope.x1 = scope.x1 == null ? R : scope.x1 + (R - scope.x1) * k;
@@ -2709,7 +2751,7 @@
     // COLOR's Palette and Cycle as on the form (by the lanes' levels)
     var cl = lanes.map(function (o) { return { amp: o.lvl, rgb: null }; });
     stageColors(cl, dt);
-    var room = LH - bh - 2 * SC_PAD, y = SC_PAD, over = gval('sc_lay') >= 0.5, legend = gval('sc_key') >= 0.5; // above the pin bar
+    var room = LH - bh - 2 * SC_PAD, y = SC_PAD, over = mg('sc_lay') >= 0.5, legend = mg('sc_key') >= 0.5; // above the pin bar
     if (over) {
       // Overlaid: the key along the top (rows of SC_KEYW), then one line for every wave, each faded in by its weight
       var per = Math.max(1, Math.floor((scope.x1 - scope.x0) / SC_KEYW)), key = lanes.length && legend ? Math.ceil(lanes.length / per) * 20 + 8 : 0;
@@ -2730,7 +2772,7 @@
     }
     scopeLabels(legend ? lanes : [], LH);
     try {
-      Shells.draw(elStage, null, { scope: { lanes: lanes, x0: scope.x0 / LW, x1: scope.x1 / LW, cycles: cyc, unit: 1 / LH, lw: gval('sc_lw'), glow: gval('sc_glow'), grid: gval('sc_grid') >= 0.5, overlay: over },
+      Shells.draw(elStage, null, { scope: { lanes: lanes, x0: scope.x0 / LW, x1: scope.x1 / LW, cycles: cyc, unit: 1 / LH, lw: mg('sc_lw'), glow: mg('sc_glow'), grid: mg('sc_grid') >= 0.5, overlay: over },
                                    dt: dt, offX: cx / LW * 2 - 1, offY: bh / LH, fx: stageFx() });
     } catch (e) { glStatus = 'scope error ' + e.message; }
     var si = Shells.scopeInfo();
@@ -2772,7 +2814,7 @@
     if (!ORDER[VFXBASE]) return;
     DEVRUN.done = true; DEVRUN.size = window.innerWidth + 'x' + window.innerHeight; // the screenshot resizes the page: warm again then
     var k, h = 1 / 60;
-    function step() { T += h; var now = performance.now(); sampleTelemetry(now, h); motion(h, now); camera(h); paintStage(h, LW, LH, freeW, cx, bh); }
+    function step() { T += h; var now = performance.now(); sampleTelemetry(now, h); pageMod(); motion(h, now); camera(h); paintStage(h, LW, LH, freeW, cx, bh); }
     for (k = 0; k < (DEVRUN.warm || 0); k++) step();
     if (!DEVRUN.bench || again) return;
     // GPU time per frame, a timer query around each draw (they resolve only in a real-time run, not on virtual time)
@@ -2800,7 +2842,7 @@
     var dt = last ? Math.min(0.1, (now - last) / 1000) : 0.016; last = now; T = (now - t0) / 1000;
     frames.push({ t: now, dt: dt * 1000 }); if (frames.length > 1200) frames.shift();
     sampleTelemetry(now, dt);
-    if (!MINI) { motion(dt, now); camera(dt); }
+    if (!MINI) { pageMod(); motion(dt, now); camera(dt); }
     // the layout: 1440 high (Mini 900), as wide as the window, scaled to it
     var S = uiScale(), LW = window.innerWidth / S, LH = window.innerHeight / S, size = LW.toFixed(1) + 'x' + LH.toFixed(1) + '@' + S.toFixed(4);
     if (size !== lastSize) {

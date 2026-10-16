@@ -95,6 +95,7 @@ class Channel
         std::memset(hist_, 0, sizeof hist_);
         histPos_ = wrapPos_ = 0;
         wasOn_   = false;
+        wasPlaying_ = true;
         lastGen_ = kGenOff;
         fresh_   = true;
         hitSeed_ = 0;
@@ -173,6 +174,22 @@ class Channel
         }
         wasOn_   = on;
         lastGen_ = p_.gen;
+        // the transport: stopped, the notes end (their releases and the effects ring out) and no new ones start;
+        // Play arms the generators as when switched on (an arp waits for its next step, a held chord comes in)
+        const bool play = cond.clock().playing;
+        if(play != wasPlaying_)
+        {
+            if(play)
+            {
+                arp_.Rearm();
+                chord_.Rearm();
+                bass_.Rearm();
+                rhythm_.Rearm();
+            }
+            else
+                Release(0);
+            wasPlaying_ = play;
+        }
         const bool drum = p_.inst == kInstDrum;
         if(drum != (lastInst_ == kInstDrum))
             Release(0); // a new instrument: the synth's notes end (the drum just rings out)
@@ -215,7 +232,7 @@ class Channel
             Harmony           scratch = cond.harmony();
             const StepContext cx      = cond.stepContext(&scratch);
             const int         ne0     = ne; // the generator's own events from here
-            switch(p_.gen)
+            switch(play ? p_.gen : kGenOff)
             {
                 case kGenArp:
                     if(p_.arp.mode != kArpOff)
@@ -661,7 +678,7 @@ class Channel
     Smoother      duckAmt_, revSend_;
     float         hist_[kHist];
     int           histPos_ = 0, wrapPos_ = 0;
-    bool          wasOn_ = false, fresh_ = true;
+    bool          wasOn_ = false, wasPlaying_ = true, fresh_ = true;
     int           lastGen_ = kGenOff, used_ = 1;
     NoteEvent     pending_[kMaxEvents];
     int           nPending_ = 0;

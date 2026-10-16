@@ -312,7 +312,7 @@ void Engine::ProcessBlock(float* outL, float* outR, int n, const HostClock* cloc
     // the frame
     const ConductorParams& cp = cond_.params();
     f.seq          = ++seq_;
-    f.beat         = clk.lastBeat();
+    f.beat         = clk.playing ? clk.lastBeat() : clk.beat0; // stopped: the beat the clock holds
     f.bpm          = clk.bpm;
     f.playing      = clk.playing ? 1 : 0;
     f.hostClock    = cond_.hasHostClock() ? 1 : 0;

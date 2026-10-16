@@ -1,7 +1,9 @@
 """The master clock, measured from the audio: step timing per division and
 tempo, three grids locked over a minute at an odd tempo, swing, host sync
-(steps on the host's beats, a position jump, stop continues at tempo,
-internal mode ignores the host)."""
+(steps on the host's beats, a position jump, internal mode ignores the
+host's tempo and beat); the transport in either sync (stopped: no new notes,
+the releases and effects ring out, the clock holds; Play goes on from there);
+no host clock at all: the engine plays itself."""
 import os
 import sys
 
@@ -90,10 +92,9 @@ L, _ = e.render(1.2, clock=(True, 120.0, 16.25))  # the playhead jumps to beat 1
 t = onsets(L)
 check(len(t) >= 2 and t[0] < 0.01 and abs(t[1] - 0.375) < 0.004,
       f"playhead jump to beat 16.25 at 120: a step at once ({1000 * t[0]:.1f} ms), the next on beat 17 ({1000 * t[1]:.1f} ms, want 375)")
-L, _ = e.render(2.0, clock=(False, 150.0, 3.0))  # stopped: continues at the host's tempo
+L, _ = e.render(2.0, clock=(False, 150.0, 3.0))  # stopped: no new notes
 t = onsets(L)
-check(len(t) >= 3 and abs(np.median(np.diff(t)) - 0.4) < 0.002,
-      f"transport stopped at 150: plays on, every {1000 * np.median(np.diff(t)):.1f} ms (400)")
+check(len(t) == 0, f"transport stopped in Host sync: no new notes ({len(t)} onsets in 2 s)")
 e.set("sync", 1)  # internal: the host is ignored
 e.set("tempo", 110)
 L, _ = e.render(2.0, clock=(True, 90.0, 0.0))
@@ -102,7 +103,7 @@ check(len(t) >= 3 and abs(np.median(np.diff(t)) - 60 / 110) < 0.002,
       f"Sync Internal: the host is ignored, Tempo 110 (every {1000 * np.median(np.diff(t)):.1f} ms)")
 e.close()
 
-# Internal is the default; it keeps its own tempo and beat but shows the host's play / stop (the page's button, the pulse)
+# Internal is the default; it keeps its own tempo and beat but follows the host's play / stop
 e = Engine()
 e.solo_arp(0, "Loop", "1/4", octave=3, bpm=100, dec=DEC_30MS)
 e.frames()
@@ -111,6 +112,61 @@ _, _, off = e.render(0.5, clock=(False, 90.0, 40.0), collect=True)
 check(e.get("sync") == 1 and on[-1].playing == 1 and off[-1].playing == 0 and abs(on[-1].bpm - 100) < 1e-6 and on[-1].beat < 2.0,
       f"default Sync Internal: Tempo 100 against the host's 90 ({on[-1].bpm:.0f}), its own beat ({on[-1].beat:.2f}, not the host's 40), "
       f"playing {on[-1].playing} / {off[-1].playing} with the host's transport")
+e.close()
+
+# ---- the transport, Internal: Stop ends the notes (no new ones, the releases and the reverb ring out, the clock
+# holds), Play goes on from where it stopped. Notes counted from the telemetry (the reverb would fool onsets).
+e = Engine()
+e.solo_arp(0, "Loop", "1/4", octave=3, bpm=120, dec=DEC_30MS)
+e.set("rev_send", 0.6, 0)
+e.set("rev_return", 1.0)
+e.frames()
+L1, _, f1 = e.render(2.25, clock=(True, 90.0, 0.0), collect=True)  # 4.5 beats: stopped mid-step
+n1 = sum(f.ch[0].hit for f in f1)
+L2, _, f2 = e.render(3.0, clock=(False, 90.0, 0.0), collect=True)
+n2 = sum(f.ch[0].hit for f in f2)
+tail = float(np.sqrt(np.mean(L2[:int(0.2 * SR)] ** 2)))
+late = float(np.sqrt(np.mean(L2[int(2.5 * SR):] ** 2)))
+beats = [f.beat for f in f2]
+check(n1 >= 4 and n2 == 0 and f2[-1].playing == 0, f"Internal, playing: {n1} notes in 2.25 s; stopped: {n2} new ones in 3 s")
+check(tail > 1e-3 and late < 0.2 * tail,
+      f"stopped: the reverb rings out (rms {tail:.4f} over the first 0.2 s, {late:.5f} after 2.5 s), not cut")
+check(max(beats) - min(beats) < 1e-9 and abs(beats[0] - 4.5) < 0.001,
+      f"stopped: the clock holds at beat {beats[0]:.4f} (4.5), every frame ({max(beats) - min(beats):.1e} apart)")
+L3, _, f3 = e.render(2.0, clock=(True, 90.0, 0.0), collect=True)
+hit3 = [i for i, f in enumerate(f3) if f.ch[0].hit]
+t3 = hit3[0] * e.max_block / SR if hit3 else -1
+check(f3[-1].playing == 1 and abs(f3[0].beat - 4.5) < 0.03 and abs(t3 - 0.25) < e.max_block / SR + 1e-6 and len(hit3) >= 3,
+      f"Play again: on from beat {f3[0].beat:.3f}, the first note {1000 * t3:.0f} ms in (the next step, beat 5: 250 ms), {len(hit3)} in 2 s")
+e.close()
+
+# ---- a transport with no tempo or position (Mini's: valid 0): its play / stop still rules, the Tempo knob the rest
+e = Engine()
+e.solo_arp(0, "Loop", "1/4", octave=3, bpm=120, dec=DEC_30MS)
+e.set("sync", 0)  # even Host sync: no tempo comes, so Tempo
+e.frames()
+hits = {}
+for playing in (1, 0, 1):
+    n = 0
+    for k in range(int(1.0 * SR) // 512):
+        L = np.zeros(512, dtype=np.float32)
+        R = np.zeros(512, dtype=np.float32)
+        DLL.ammo_process(e.p, L.ctypes.data_as(C.POINTER(C.c_float)), R.ctypes.data_as(C.POINTER(C.c_float)), 512,
+                         C.byref(AmmoClock(0, playing, 0.0, 0.0)))
+        fr = e.frames()
+        n += sum(f.ch[0].hit for f in fr)
+        last = fr[-1] if fr else last
+    hits[len(hits)] = (n, last.playing, last.bpm)
+check(hits[0][0] >= 2 and hits[1][0] == 0 and hits[2][0] >= 1 and [h[1] for h in hits.values()] == [1, 0, 1] and hits[0][2] == 120,
+      f"a transport with no tempo (valid 0): play {hits[0][0]} notes, stop {hits[1][0]}, play {hits[2][0]}; at Tempo {hits[0][2]:.0f}")
+e.close()
+
+# ---- no clock at all (a test, the bench): the engine plays itself
+e = Engine()
+e.solo_arp(0, "Loop", "1/4", octave=3, bpm=120, dec=DEC_30MS)
+e.frames()
+L, _, fr = e.render(2.0, collect=True)
+check(len(onsets(L)) >= 3 and fr[-1].playing == 1, f"no host clock: plays ({len(onsets(L))} notes in 2 s), playing {fr[-1].playing}")
 e.close()
 
 # ---- telemetry follows the clock

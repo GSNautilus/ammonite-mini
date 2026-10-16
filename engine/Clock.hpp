@@ -9,7 +9,8 @@
 namespace ammo {
 
 /** What the host knows at a block's first sample (quarter notes since the
- *  song start). valid = false: no host clock at all. */
+ *  song start). valid = false: no tempo or position (playing still counts:
+ *  stopped, the engine starts no notes and its clock holds). */
 struct HostClock
 {
     bool   valid   = false;

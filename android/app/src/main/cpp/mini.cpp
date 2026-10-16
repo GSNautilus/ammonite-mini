@@ -2,7 +2,8 @@
    (docs/MINI_PLAN.md sections 3 and 4).
 
    Play: an Oboe stream (AAudio, low latency, shared (the exclusive MMAP path is silent on this tablet), float stereo at the device's rate) whose
-   callback runs ammo_process with no host clock and Sync on Internal, so the engine's own clock runs. The
+   callback runs ammo_process with the bridge's transport as a clock with no tempo or position (valid 0), so the
+   engine's own clock runs and its play / stop rules: stopped, no new notes, the tails ring out. The
    callback thread is pinned to the fastest cores. Each callback is timed against the audio it makes: its load
    (0..1 of the time it had), kept as the mean and the worst over the last second and the worst since start, with
    Oboe's xrun count (the dropouts).
@@ -12,7 +13,7 @@
    modulation pool live: 32 LFOs, 128 routes) and reports the time each took, as a share of real time.
 
    The bridge (bridge/Bridge.hpp) on the same engine: the page's messages in, JavaScript out through the Kotlin
-   host's eval; its transport decides whether the callback runs the engine or outputs silence. Every bridge call
+   host's eval; its transport is the play / stop the callback passes the engine. Every bridge call
    comes from the UI thread (the WebView's messages, Choreographer's frames, the pickers' results), so the host's
    methods are called back on it, with that call's JNIEnv.
 
@@ -202,15 +203,14 @@ public:
         if(!pinned_) { core_ = pinToBigCores(); pinned_ = true; }
         const auto t0 = Clock::now();
         float* out = static_cast<float*>(data);
-        if(bridge_ != nullptr && !bridge_->Playing()) // stopped: silence, the engine waits where it was
-        {
-            std::memset(out, 0, sizeof(float) * 2 * (size_t)frames);
-            return oboe::DataCallbackResult::Continue;
-        }
+        // the transport: no tempo or position, only play / stop (stopped, the engine starts no notes, its clock
+        // holds and the releases and effects ring out)
+        AmmoClock tr{};
+        tr.playing = bridge_ == nullptr || bridge_->Playing() ? 1 : 0;
         for(int done = 0; done < frames;)
         {
             const int n = frames - done < kMaxBlock ? frames - done : kMaxBlock;
-            ammo_process(engine_, L_.data(), R_.data(), n, nullptr);
+            ammo_process(engine_, L_.data(), R_.data(), n, &tr);
             for(int i = 0; i < n; i++) { out[2 * (done + i)] = L_[(size_t)i]; out[2 * (done + i) + 1] = R_[(size_t)i]; }
             done += n;
         }

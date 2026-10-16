@@ -41,16 +41,18 @@ class Conductor
         }
         else if(p.sync == 1 || !haveHost_)
             bpm_ = p.tempo;
-        // playing: the host's transport, followed for its beat only in Host sync (Internal keeps its own beat and
-        // tempo but still shows play / stop, and the page's pulse runs with it)
-        const bool playing = host != nullptr && host->valid && host->playing;
+        // playing: the host's transport, in either sync (Host takes its beat too, Internal keeps its own beat and
+        // tempo). Stopped, the clock holds where it is (Play goes on from there) and the channels start no notes.
+        // No clock at all (a test, the bench): the engine plays itself. A clock that is not valid still says play /
+        // stop (Mini's: its own transport, no tempo or position).
+        const bool playing = host == nullptr || host->playing;
         clk.bpm     = bpm_;
         clk.bps     = bpm_ / 60.0 / (double)sr_;
-        clk.beat0   = useHost && playing ? host->beat : beat_;
+        clk.beat0   = useHost && host->playing ? host->beat : beat_;
         clk.frames  = frames;
         clk.playing = playing;
         clk.swing   = (double)Clamp01(p.swing) / 3.0; // not smoothed: timing stays identical for any block size
-        beat_       = clk.beat0 + clk.bps * (double)frames;
+        beat_       = playing ? clk.beat0 + clk.bps * (double)frames : clk.beat0;
         clk_      = clk;
 
         prog_     = ProgOf(p.prog, p.progLen, p.progStep);

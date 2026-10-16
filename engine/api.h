@@ -29,8 +29,8 @@ extern "C" {
 
 typedef struct AmmoClock
 {
-    int    valid;   /* the host has a clock at all */
-    int    playing; /* its transport runs */
+    int    valid;   /* the host has a tempo and a position (bpm, beat) */
+    int    playing; /* its transport runs (valid or not: stopped, no new notes; a null clock plays) */
     double bpm;
     double beat;    /* quarter notes since the song start, at the block's first sample */
 } AmmoClock;

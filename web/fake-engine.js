@@ -114,7 +114,7 @@
   }
   for (var r0 = 0; r0 < POOL_ROUTES; r0++) {
     var rn = 'Route ' + (r0 + 1) + ' ', rs = 'route' + (r0 + 1) + '_';
-    [[rn + 'source', rs + 'src', 0, 48, 0, 49, SRCN], [rn + 'target', rs + 'target', -1, 3135, -1, 3137], [rn + 'amount', rs + 'amt', -1, 1, 0, 0],
+    [[rn + 'source', rs + 'src', 0, 48, 0, 49, SRCN], [rn + 'target', rs + 'target', -1, 5119, -1, 5121], [rn + 'amount', rs + 'amt', -1, 1, 0, 0],
      [rn + 'polarity', rs + 'pol', 0, 1, 1, 2, N.pol]].forEach(function (d, k) { add(ROUTE_BASE + 4 * r0 + k, d, -1); });
   }
   function sid(slot, sym) { return SLOT_BASE + STRIDE * slot + SP[sym]; }
@@ -209,6 +209,13 @@
   if (Q.has('set')) Q.get('set').split(',').forEach(function (kv) { var p = kv.split(':'); if (G[p[0]] != null) V[G[p[0]]] = +p[1]; });
   // sset=0:arp_pool:1,0:note_shift:1: a channel's parameters over the preset (slot from 0, symbol, value)
   if (Q.has('sset')) Q.get('sset').split(',').forEach(function (kv) { var p = kv.split(':'); if (SP[p[1]] != null) V[sid(+p[0], p[1])] = +p[2]; });
+  // route=1:4101:0.5,33:4866:-0.3:0: routes over the preset's, from route 101 (source 1..32 an LFO / 33..48 a macro, put in
+  // use; target id, a page parameter's too; amount; polarity 0 unipolar, bipolar if left out)
+  if (Q.has('route')) Q.get('route').split(',').forEach(function (x, i) {
+    var p = x.split(':').map(Number), r = 100 + i;
+    V[rid(r, 'src')] = p[0]; V[rid(r, 'target')] = p[1]; V[rid(r, 'amt')] = p[2]; V[rid(r, 'pol')] = p.length > 3 ? p[3] : 1;
+    V[p[0] >= SRC_M1 ? G['macro' + (p[0] - SRC_M1 + 1) + '_on'] : lid(p[0] - 1, 'on')] = 1;
+  });
   try {
     var keep = JSON.parse(localStorage.getItem(UI_KEY) || '{}');
     ['tab', 'dock', 'view'].forEach(function (k) { if (Q.has(k)) keep[k] = Q.get(k); });

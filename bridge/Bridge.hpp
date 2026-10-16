@@ -15,9 +15,10 @@
  *    The modulation routes (no host's parameters on desktop, where the plugin's "routes" state follows them)
  *    are set the same way, and the engine's patch text saves them with the rest.
  *  - No output devices (desktop's standalone host sends `ammo.outputs`): Android routes the audio.
- *  - The transport is the bridge's: the clock is always the engine's internal one, which never stops, so
- *    play / stop (Space: key 32) is a state here that the audio callback reads (Playing()): stopped, it
- *    outputs silence and leaves the engine where it was. Ticks report it as `p`.
+ *  - The transport is the bridge's: the tempo and beat are the engine's own (none come from here), and
+ *    play / stop (Space: key 32) is a state here that the audio callback reads (Playing()) and passes the
+ *    engine as a clock with no tempo or position: stopped, no new notes, the tails ring out, the clock holds.
+ *    Ticks report it as `p`.
  *  - Patch files are written and read by the platform (Android's pickers give streams, not paths): on `save`
  *    the platform is asked for a picker, writes PatchText() where the user chose and calls Saved(); on `open`,
  *    it reads the file and calls Opened() with its text.
