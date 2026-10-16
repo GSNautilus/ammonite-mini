@@ -23,6 +23,8 @@ print(f"== {DLL_PATH}")
 SHAPES, LDIVS = LFO_SHAPES, LFO_DIVS
 MACRO = lambda m: SRC_MACRO1 + m  # noqa: E731
 LFO = lambda l: SRC_LFO1 + l  # noqa: E731
+PAGE_SC_GAIN = 4096 + 768 + 2  # the scope's Height, a page parameter (app.js VSCBASE + 2)
+PAGE_IDS_END = 4096 + 1024     # kPageIdBase + kPageIds
 
 
 def tone(**kw):
@@ -212,7 +214,7 @@ check(all(f.route[r] == -1 for f in fr for r in range(POOL_ROUTES)) and all(f.lf
 ref.close()
 for label, r in [("amount 0", (LFO(0), pid("cutoff", 0), 0.0)), ("source Off", (0, pid("cutoff", 0), 0.5)),
                  ("no target", (LFO(0), -1, 0.5)), ("a stepped target", (LFO(0), pid("arp_div", 0), 0.5)),
-                 ("the tempo as target", (MACRO(0), pid("tempo"), 0.5))]:
+                 ("the tempo as target", (MACRO(0), pid("tempo"), 0.5)), ("a page parameter as target", (MACRO(0), PAGE_SC_GAIN, 0.5))]:
     e = tone()
     e.lfo(0, on=0)
     e.set("macro1", 1.0)
@@ -226,6 +228,22 @@ for label, r in [("amount 0", (LFO(0), pid("cutoff", 0), 0.0)), ("source Off", (
     check(np.array_equal(L, Lref), f"a route with {label}: the same audio as none")
     e.close()
     ref.close()
+
+# ---- a route onto one of the page's parameters (kPageIdBase ..: the stage's look, the scope) keeps its target, in a
+# saved patch too, and the engine leaves it to the page (no telemetry position)
+e = tone()
+e.route(5, MACRO(0), PAGE_SC_GAIN, 0.5)
+e.render(0.05)
+_, _, fr = e.render(0.05, collect=True)
+check(e.get_id(route_id(5, 'target')) == PAGE_SC_GAIN and fr[-1].route[5] == -1,
+      f"a route on page id {PAGE_SC_GAIN} (the scope's Height) keeps its target ({e.get_id(route_id(5, 'target')):.0f}); the engine sends no position for it")
+f = Engine()
+f.load(e.save())
+check(f.get_id(route_id(5, 'target')) == PAGE_SC_GAIN, "and a saved patch brings it back")
+f.set_id(route_id(5, 'target'), PAGE_IDS_END + 50)
+check(f.get_id(route_id(5, 'target')) == PAGE_IDS_END - 1, f"a target past the page's ids is clamped to its last ({f.get_id(route_id(5, 'target')):.0f})")
+e.close()
+f.close()
 
 # ---- routes on one target add, and the sum is clamped to its range
 e = tone(cutoff=0.5)

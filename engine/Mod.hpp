@@ -17,7 +17,10 @@
  *  knob); Unipolar as (s + 1) / 2 (up from the knob, down for a negative
  *  amount); a macro is 0..1 either way. A target is a channel's continuous
  *  parameter or a global one (IsModTarget). Routes on the same target add;
- *  the result is clamped to the range.
+ *  the result is clamped to the range. A route may also name one of the
+ *  page's parameters (kPageIdBase ..): the stage's look, camera, effects and
+ *  scope. The engine does nothing with it (not a target here); the page
+ *  applies it the same way, from the LFOs' telemetry and the macros.
  *
  *  The engine applies modulation on a grid of kModBlock samples counted
  *  from its start (any block size gives the same audio), and only while a

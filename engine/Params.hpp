@@ -10,6 +10,11 @@
  *  in the table, hidden, so a version 2 patch can still be read and
  *  converted.
  *
+ *  Ids from kPageIdBase (4096) up are the page's own parameters (the stage's
+ *  look, its camera, its effects, the scope): never in this table, but a
+ *  route may name one as its target. The engine leaves such a route be (it
+ *  is not IsModTarget) and the page applies it to its own parameter.
+ *
  *  A host sees every parameter but the hidden ones and the routes (pfNoHost:
  *  saved with the patch, never a host parameter; 128 x 4 would swamp a host's
  *  list). The host index is not the id.
@@ -31,6 +36,7 @@ constexpr int kSlotStride = 128;
 constexpr int kPoolBase   = kGlobalIds + kSlots * kSlotStride; // 2112: the modulation pool
 constexpr int kPoolIds    = 1024;
 constexpr int kNumIds     = kPoolBase + kPoolIds; // 3136
+constexpr int kPageIdBase = 4096, kPageIds = 1024;  // the page's parameters: a route's target only
 
 // the pool's caps (fixed at compile time: the audio thread allocates nothing, a host sees a fixed list)
 constexpr int kPoolLfos = 32, kPoolMacros = 16, kPoolRoutes = 128;
@@ -56,7 +62,7 @@ constexpr int kRouteBase = kMacroValBase + kPoolMacros, kRouteStride = 4; // 240
 enum RouteParam
 {
     rSrc = 0, // ModSource
-    rTarget,  // a parameter id (IsModTarget), -1: none
+    rTarget,  // a parameter id (IsModTarget), or a page parameter's (kPageIdBase ..), -1: none
     rAmt,     // -1..1 of the target's whole range
     rPol,     // 0 Unipolar, 1 Bipolar (the default)
 };
@@ -489,7 +495,7 @@ struct PoolTable
         }
         const ParamDef kRoute[kRouteStride] = {
             {"", "", 0.f, (float)(kNumModSources - 1), 0.f, kNumModSources, srcNames, pfInteger | pfNoHost},
-            {"", "", -1.f, (float)(kNumIds - 1), -1.f, kNumIds + 1, nullptr, pfInteger | pfNoHost},
+            {"", "", -1.f, (float)(kPageIdBase + kPageIds - 1), -1.f, kPageIdBase + kPageIds + 1, nullptr, pfInteger | pfNoHost},
             {"", "", -1.f, 1.f, 0.f, 0, nullptr, pfNoHost}, // of the target's whole range
             {"", "", 0.f, 1.f, 1.f, 2, kPolarityNames, pfInteger | pfNoHost}};
         for(int r = 0; r < kPoolRoutes; r++)
