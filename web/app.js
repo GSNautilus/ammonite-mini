@@ -781,10 +781,6 @@
     return '<svg width="20" height="16" viewBox="0 0 20 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="18" height="14" rx="2.5"></rect>' +
       '<rect x="' + x + '" y="3.5" width="4.5" height="9" rx="1" fill="currentColor" stroke="none"></rect></svg>';
   }
-  var SAVE_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
-    '<path d="M12 3v11"></path><path d="M7.5 9.5 12 14l4.5-4.5"></path><path d="M4 15v3.5A2.5 2.5 0 0 0 6.5 21h11a2.5 2.5 0 0 0 2.5-2.5V15"></path></svg>';
-  var OPEN_SVG = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' +
-    '<path d="M3 7.5V18a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9.5a2 2 0 0 0-2-2h-7L10 5H5a2 2 0 0 0-2 2.5z"></path></svg>';
   var LOGO = '<svg width="26" height="26" viewBox="-2 4 24 24" fill="none" stroke="#efe6d8" stroke-width="1.6" stroke-linecap="round"><path d="M15 14 a1 1 0 0 1 -1 1 a2 2 0 0 1 -2 -2 a3 3 0 0 1 3 -3 a5 5 0 0 1 5 5 a8 8 0 0 1 -8 8 a13 13 0 0 1 -13 -13"></path></svg>';
   function other(side) { return side === 'left' ? 'right' : 'left'; }
 
@@ -814,8 +810,8 @@
     if (MINI) tabs.pop(); // no stage (the full-screen Scope comes as a view of its own)
     var out = '<div class="ptop">' + LOGO + '<span class="brand">AMMONITE</span>' +
       '<div class="preset"><button data-act="preset-prev" title="Previous preset">‹</button><span class="name" data-txt="preset"></span><button data-act="preset-next" title="Next preset">›</button></div>' +
-      '<button class="iconbtn lg" data-act="save" title="Save the patch to a file (Ctrl+S)">' + SAVE_SVG + '</button>' +
-      '<button class="iconbtn lg" data-act="open" title="Open a patch file (Ctrl+O)">' + OPEN_SVG + '</button>' +
+      '<button class="iconbtn lg txt" data-act="open" title="Load a patch file (Ctrl+O)">Load</button>' +
+      '<button class="iconbtn lg txt" data-act="save" title="Save the patch to a file (Ctrl+S)">Save</button>' +
       '<div class="grow"></div>' + cpuHtml() + outputHtml() + '<canvas class="hfader master" data-id="' + gid('volume') + '" title="Master volume (as the Conductor\'s)"></canvas>' +
       recb + play + bar + (MINI ? '</div>' : dock + '<button class="iconbtn lg" data-act="rail" title="Collapse the panel">' + toEdge + '</button></div>') +
       '<div class="tabs" role="tablist">';

@@ -1,8 +1,8 @@
 # web\ files shared with ammonite: its desktop/plugin/web, the one page for both apps (Mini mode: app.js MINI).
 # Written by .\mini.ps1 web, checked by .\mini.ps1 test. Do not edit the files below here: change them in ammonite
 # (desktop mode must not change), commit there, then .\mini.ps1 web. Mini's own: index.html, dev.html.
-commit d7067ac (desktop), copied 2026-10-16
-app.js 4bb0311051df6ca0b40c1aa4d563cf8464eb79a55061abf2f924691909c6b156
-app.css e5979ba9e1dc082a02853036dac8a4a02e75fd578b213bf8b1d53455785481ba
+commit 8cf92a5 (desktop), copied 2026-10-18
+app.js a7e24d00d941f1fb712f6fcdc082222cc3535821ba1442eb2c4db05aa87b7fe6
+app.css fd9650785ae3681ecfe4d8a67ea0a20478c5f5db5f92b2e39310485e64f2a1df
 knobs.js a75f202c2893fe2ad9856e0b5cae939818de389dc5474281abe43653ca3d42dd
 fake-engine.js 1ccb0f5c350a36ea20c2d94d235d7491ec6b16ee66c48f21bccf1f8e859b1804
