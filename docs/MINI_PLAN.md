@@ -228,6 +228,21 @@ engine and the page this started from.
   - **Waits for the tablet**: the second row by finger (Count's chips,
     the three knobs), and the step view's names at the glass's size.
 
+- 2026-10-18, **0.1.0, the first release.** The page at `ammonite`
+  `8cf92a5` (Load and Save as text buttons). The release build signed
+  with its own key, kept outside the repo (`android/app/build.gradle.kts`,
+  `mini.ps1 release`); the debug build is now `com.ammonite.mini.dev`, so
+  the two sit side by side. The repo public as `GSNautilus/ammonite-mini`,
+  the APK on its `v0.1.0` release, the page at
+  `gsnautilus.github.io/ammonite/mini/`.
+  - Checked: `mini.ps1 test` passes; the release APK verifies with
+    apksigner; installed on the tablet (Android 16), it starts and plays:
+    the presets stepped through, Night groove (6 channels, an LFO, two
+    macros) at a mean callback load of 44-58 %, worst 173 % of a burst, no
+    xruns in 7 minutes (the 8 ms buffer is two bursts). Screenshots by
+    `adb exec-out screencap`.
+  - Still to do for phase 4 item 5: an icon (it shows Android's default).
+
 ## 1. What it is
 
 The desktop's synth (16 channels, the conductor, generators, instruments,
