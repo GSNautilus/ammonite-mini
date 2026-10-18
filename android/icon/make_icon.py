@@ -1,0 +1,135 @@
+"""The launcher icon's shell: an ammonite, a logarithmic spiral with ribs across each whorl.
+
+Writes android/app/src/main/res/drawable/ic_launcher_foreground.xml (the adaptive icon's foreground, also its
+monochrome layer) and, with --svg PATH, the same shape as an SVG to look at. Run it again after changing a number
+here; the colours live in res/values/ic_launcher.xml (and the dev build's in src/debug).
+
+The canvas is the adaptive icon's 108 x 108; the shell fits a circle of radius FIT about the centre, inside the
+66 dp safe zone (radius 33)."""
+import math
+import sys
+from pathlib import Path
+
+GROWTH = 1.75      # the spiral's radius grows by this much per turn
+TURNS = 4.25       # from the aperture in to the centre
+SUTURE = 0.045     # the spiral line's half-width, as a fraction of its radius
+RIBS = 20          # ribs per turn
+RIB_W = 0.05       # a rib's half-width at its outer end, as a fraction of the radius there
+RIB_BEND = 0.14    # how far a rib leans forward (towards the aperture) at its outer end, radians
+RIB_MIN_R = 9.5    # no ribs on whorls smaller than this: the inner two would blur at launcher size
+FIT = 30.0
+C = 54.0
+
+B = math.log(GROWTH) / (2 * math.pi)
+END = TURNS * 2 * math.pi
+
+
+def r(t):  # the spiral's radius at angle t from the aperture, before scaling
+    return math.exp(-B * t)
+
+
+def pt(rad, ang):
+    return (rad * math.cos(ang), rad * math.sin(ang))
+
+
+def ang(t):  # the shell coils clockwise inwards; the aperture faces down-left
+    return 2.3 + t
+
+
+def shapes():
+    """The spiral line, the centre disc and the ribs as outlines (lists of points), before scaling and centring;
+    each rib with the radius of its outer end."""
+    n = int(TURNS * 24)
+    ts = [END * i / n for i in range(n + 1)]
+    outer = [pt(r(t) * (1 + SUTURE), ang(t)) for t in ts]
+    inner = [pt(r(t) * (1 - SUTURE), ang(t)) for t in ts]
+    spiral = outer + inner[::-1]  # tapering into the centre
+    disc = [pt(r(END), 2 * math.pi * i / 16) for i in range(16)]  # the spiral's inner end runs into it
+    ribs = []
+    step = 2 * math.pi / RIBS
+    k = 0
+    while k * step <= END - 2 * math.pi:
+        t = k * step
+        # each end overlapping the spiral line a little, so no seam shows
+        ro, ri = r(t) * (1 - SUTURE / 2), r(t + 2 * math.pi) * (1 + SUTURE / 2)
+        w, bend = RIB_W, RIB_BEND
+        if k == 0:  # the aperture's rim: heavier, unbent, its front edge flush with the spiral's end
+            w, bend = RIB_W * 1.5, 0.0
+            t = w
+        side_a, side_b = [], []
+        for i in range(5):
+            s = i / 4
+            rad = ri + (ro - ri) * s
+            a = ang(t) - bend * s * s
+            side_a.append(pt(rad, a - w))  # half-width w * rad, as an angle at this radius
+            side_b.append(pt(rad, a + w))
+        ribs.append((ro, side_a + side_b[::-1]))
+        k += 1
+    return spiral, disc, ribs
+
+
+def fitted():
+    spiral, disc, ribs = shapes()
+    allp = spiral + [p for _, s in ribs for p in s]
+    x0, x1 = min(p[0] for p in allp), max(p[0] for p in allp)
+    y0, y1 = min(p[1] for p in allp), max(p[1] for p in allp)
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    k = FIT / max(math.hypot(p[0] - cx, p[1] - cy) for p in allp)
+    tr = lambda s: [(C + (x - cx) * k, C + (y - cy) * k) for x, y in s]
+    return tr(spiral), tr(disc), [tr(s) for ro, s in ribs if ro * k >= RIB_MIN_R]
+
+
+def smooth(poly, closed=True):
+    """Path data through the points: Catmull-Rom as cubic Beziers."""
+    f = lambda v: f"{v:.2f}".rstrip("0").rstrip(".")
+    n = len(poly)
+    d = [f"M{f(poly[0][0])},{f(poly[0][1])}"]
+    for i in range(n if closed else n - 1):
+        at = (lambda j: poly[j % n]) if closed else (lambda j: poly[min(max(j, 0), n - 1)])
+        p0, p1, p2, p3 = at(i - 1), at(i), at(i + 1), at(i + 2)
+        c1 = (p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6)
+        c2 = (p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6)
+        d.append(f"C{f(c1[0])},{f(c1[1])} {f(c2[0])},{f(c2[1])} {f(p2[0])},{f(p2[1])}")
+    d.append("Z")
+    return "".join(d)
+
+
+def pathdata():
+    """The spiral line with the centre disc, and the ribs, as two strings of path data."""
+    spiral, disc, ribs = fitted()
+
+    def sides(p):  # two sides meeting in sharp ends: smooth each alone, joined by straight lines
+        h = len(p) // 2
+        return smooth(p[:h], closed=False)[:-1] + "L" + smooth(p[h:], closed=False)[1:]
+    return sides(spiral) + smooth(disc), "".join(sides(p) for p in ribs)
+
+
+def main():
+    spiral, ribs = pathdata()
+    root = Path(__file__).resolve().parent.parent
+    xml = root / "app/src/main/res/drawable/ic_launcher_foreground.xml"
+    paths = "\n".join(
+        f'    <path\n        android:fillColor="@color/ic_launcher_shell"\n        android:pathData="{d}" />'
+        for d in [spiral, ribs])
+    xml.parent.mkdir(parents=True, exist_ok=True)
+    xml.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<!-- The launcher icon\'s ammonite. Generated by android/icon/make_icon.py: change that, not this. -->\n'
+        '<vector xmlns:android="http://schemas.android.com/apk/res/android"\n'
+        '    android:width="108dp"\n    android:height="108dp"\n'
+        '    android:viewportWidth="108"\n    android:viewportHeight="108">\n'
+        f'{paths}\n</vector>\n', encoding="utf-8", newline="\n")
+    print(f"wrote {xml}")
+    if "--svg" in sys.argv:
+        i = sys.argv.index("--svg")
+        svg = Path(sys.argv[i + 1])
+        bg, fg = (sys.argv[i + 2:i + 4] + ["#1b1b1e", "#efe6d8"][len(sys.argv[i + 2:i + 4]):])
+        svg.write_text(
+            f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" width="108" height="108">'
+            f'<rect width="108" height="108" fill="{bg}"/>'
+            f'<path fill="{fg}" d="{spiral}"/><path fill="{fg}" d="{ribs}"/></svg>', encoding="utf-8")
+        print(f"wrote {svg}")
+
+
+if __name__ == "__main__":
+    main()

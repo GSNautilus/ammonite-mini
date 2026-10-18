@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The launcher icon's colours, the page's (web/app.css): its panel grey and its cream. -->
+<resources>
+    <color name="ic_launcher_background">#1B1B1E</color>
+    <color name="ic_launcher_shell">#EFE6D8</color>
+</resources>
