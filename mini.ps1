@@ -25,7 +25,8 @@
   port changes each time Wireless debugging is switched on).
 
 .EXAMPLE
-  .\mini.ps1 apk       # android\app\build\outputs\apk\debug\app-debug.apk (Gradle, the SDK, Android Studio's JDK)
+  .\mini.ps1 apk       # android\app\build\outputs\apk\debug\app-debug.apk (Gradle, the SDK, Android Studio's JDK):
+                       # the dev build, "Ammonite Mini dev" (com.ammonite.mini.dev), beside the release on the tablet
   .\mini.ps1 install   # apk, then onto the tablet
   .\mini.ps1 run       # install, then start it: the page from the APK, the default preset playing
   .\mini.ps1 run -Dev  # the same, the page from this PC (.\mini.ps1 serve in another window): page edits
@@ -33,6 +34,14 @@
   .\mini.ps1 bench     # install, start it benching, print the results from logcat
   .\mini.ps1 log       # logcat, the app's lines (Ctrl+C stops)
   .\mini.ps1 shot      # the tablet's screen -> build\shot.png
+
+.EXAMPLE
+  .\mini.ps1 release
+  The release APK, signed with the release key (android\app\build.gradle.kts:
+  a properties file outside the repo, $env:AMMONITE_MINI_SIGNING or
+  ~\keys\ammonite-mini-release.properties), checked with apksigner, copied to
+  build\Ammonite-Mini-<versionName>.apk. -Install also puts it on the tablet
+  and starts it ("Ammonite Mini", com.ammonite.mini).
 
 .EXAMPLE
   .\mini.ps1 web
@@ -52,14 +61,15 @@
 #>
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('build', 'test', 'web', 'serve', 'pair', 'connect', 'apk', 'install', 'run', 'bench', 'log', 'shot')]
+    [ValidateSet('build', 'test', 'web', 'serve', 'pair', 'connect', 'apk', 'install', 'run', 'bench', 'log', 'shot', 'release')]
     [string]$Action,
     [string]$Ammonite = '',
     [switch]$Force,
     [int]$Port = 8010,
     [string]$Device = '',
     [string]$Code = '',
-    [switch]$Dev
+    [switch]$Dev,
+    [switch]$Install
 )
 
 $ErrorActionPreference = 'Stop'
@@ -95,8 +105,10 @@ function Invoke-MsvcBuild {
 # Android: the SDK where Android Studio puts it, and Android Studio's own JDK, unless set otherwise
 $sdk = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:LOCALAPPDATA 'Android\Sdk' }
 $adb = Join-Path $sdk 'platform-tools\adb.exe'
-$app = 'com.ammonite.mini'
+$app = 'com.ammonite.mini.dev'                     # the dev build; the release is com.ammonite.mini
+$act = "$app/com.ammonite.mini.MainActivity"      # the activity keeps the code's package name
 $apk = Join-Path $root 'android\app\build\outputs\apk\debug\app-debug.apk'
+$rel = Join-Path $root 'android\app\build\outputs\apk\release\app-release.apk'
 
 function Invoke-Adb {
     if (-not (Test-Path $adb)) { throw "adb not found at $adb (Android Studio -> SDK Manager -> SDK Tools -> Platform-Tools)" }
@@ -107,17 +119,17 @@ function Assert-Device {
     $lines = & $adb devices | Select-Object -Skip 1 | Where-Object { $_ -match '\sdevice$' }
     if (-not $lines) { throw 'no tablet connected: .\mini.ps1 connect -Device <address:port from Wireless debugging>' }
     # the tablet can be listed twice (adb's own mDNS connections, or one and a manual one): the first of them, its
-    # name up to the tab (an mDNS name can hold a space: "adb-R52XA08RJ4V-fDGtv2 (2)._adb-tls-connect._tcp")
+    # name up to the tab (an mDNS name can hold a space: "adb-R52X0000000-AbCdEf (2)._adb-tls-connect._tcp")
     if (-not $env:ANDROID_SERIAL) { $env:ANDROID_SERIAL = (@($lines)[0] -split "`t")[0] }
 }
-function Invoke-Gradle {
+function Invoke-Gradle($task = 'assembleDebug', $out = $apk) {
     if (-not $env:JAVA_HOME) { $env:JAVA_HOME = 'C:\Program Files\Android\Android Studio\jbr' }
     if (-not (Test-Path (Join-Path $env:JAVA_HOME 'bin\java.exe'))) { throw "no JDK at $env:JAVA_HOME (set JAVA_HOME)" }
     if (-not (Test-Path $sdk)) { throw "no Android SDK at $sdk (set ANDROID_HOME)" }
     "sdk.dir=$($sdk -replace '\\', '/')" | Set-Content -Encoding ascii (Join-Path $root 'android\local.properties')
-    & cmd /c "cd /d `"$root\android`" && gradlew.bat assembleDebug --console=plain -q"
+    & cmd /c "cd /d `"$root\android`" && gradlew.bat $task --console=plain -q"
     if ($LASTEXITCODE -ne 0) { throw 'gradle build failed' }
-    Write-Host "built $apk" -ForegroundColor Green
+    Write-Host "built $out" -ForegroundColor Green
 }
 function Install-App { Invoke-Gradle; Assert-Device; Invoke-Adb install -r $apk }
 
@@ -208,13 +220,13 @@ switch ($Action) {
             $url = "http://$($ip):$Port/index.html"
             Write-Host "page from $url (is .\mini.ps1 serve running?)" -ForegroundColor Cyan
         }
-        Invoke-Adb shell am start -S -n "$app/.MainActivity" --es url "'$url'"
+        Invoke-Adb shell am start -S -n $act --es url "'$url'"
     }
     'bench' {
         # offline renders on the tablet (about a minute); the results come back through logcat
         Install-App
         Invoke-Adb logcat -c
-        Invoke-Adb shell am start -S -n "$app/.MainActivity" --ez bench true
+        Invoke-Adb shell am start -S -n $act --ez bench true
         Write-Host 'benching on the tablet...' -ForegroundColor Cyan
         $deadline = (Get-Date).AddMinutes(5)
         do {
@@ -232,6 +244,23 @@ switch ($Action) {
         $png = Join-Path $build 'shot.png'
         & cmd /c "`"$adb`" exec-out screencap -p > `"$png`""
         Write-Host "saved $png" -ForegroundColor Green
+    }
+    'release' {
+        Invoke-Gradle 'assembleRelease' $rel
+        if (-not (Test-Path $rel)) { throw "no signed release APK (no signing properties? see android\app\build.gradle.kts)" }
+        $tools  = Get-ChildItem (Join-Path $sdk 'build-tools') | Sort-Object { [version]($_.Name -replace '[^\d.].*$', '') } | Select-Object -Last 1
+        $signer = Join-Path $tools.FullName 'apksigner.bat'
+        & cmd /c "`"$signer`" verify --print-certs `"$rel`" 2>nul" # (its JDK's warnings on stderr would stop the script)
+        if ($LASTEXITCODE -ne 0) { throw 'apksigner: the release APK does not verify' }
+        $ver = ([regex]::Match((Get-Content -Raw (Join-Path $root 'android\app\build.gradle.kts')), 'versionName = "([^"]+)"')).Groups[1].Value
+        $out = Join-Path $build "Ammonite-Mini-$ver.apk"
+        Copy-Item -Force $rel $out
+        Write-Host "release: $out" -ForegroundColor Green
+        if ($Install) {
+            Assert-Device
+            Invoke-Adb install -r $out
+            Invoke-Adb shell am start -S -n 'com.ammonite.mini/.MainActivity'
+        }
     }
     'serve' {
         $ip = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.IPAddress -like '192.168.*' } | Select-Object -First 1).IPAddress

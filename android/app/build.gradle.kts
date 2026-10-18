@@ -1,6 +1,15 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
 }
+
+// Release signing: a keystore kept outside the repo, described by a properties file (storeFile, storePassword,
+// keyAlias, keyPassword) at $AMMONITE_MINI_SIGNING, else ~/keys/ammonite-mini-release.properties. Without one
+// the release APK is built unsigned.
+val signingFile = file(System.getenv("AMMONITE_MINI_SIGNING")
+    ?: "${System.getProperty("user.home")}/keys/ammonite-mini-release.properties")
+val signing = Properties().apply { if (signingFile.exists()) signingFile.inputStream().use { load(it) } }
 
 android {
     namespace = "com.ammonite.mini"
@@ -12,16 +21,30 @@ android {
         minSdk = 33 // the tablet runs Android 14+; 33 has the performance-hint API
         targetSdk = 35
         versionCode = 1
-        versionName = "0.1"
+        versionName = "0.1.0"
+        manifestPlaceholders["appLabel"] = "Ammonite Mini"
         ndk { abiFilters += "arm64-v8a" } // the tablet's only ABI
         externalNativeBuild {
             cmake { arguments += listOf("-DANDROID_STL=c++_shared") } // as Oboe's prefab AAR
         }
     }
+    signingConfigs {
+        if (signingFile.exists()) create("release") {
+            storeFile = file(signing.getProperty("storeFile"))
+            storePassword = signing.getProperty("storePassword")
+            keyAlias = signing.getProperty("keyAlias")
+            keyPassword = signing.getProperty("keyPassword")
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = false
-            signingConfig = signingConfigs.getByName("debug") // sideloading only, until phase 4
+            signingConfig = signingConfigs.findByName("release")
+        }
+        // signed with the debug key: an app of its own beside the release, so neither has to be uninstalled for the other
+        debug {
+            applicationIdSuffix = ".dev"
+            manifestPlaceholders["appLabel"] = "Ammonite Mini dev"
         }
     }
     externalNativeBuild {

@@ -8,3 +8,9 @@ android/build/
 android/app/build/
 android/app/.cxx/
 android/local.properties
+# signing keys never live here (they sit outside the repo: android/app/build.gradle.kts)
+*.jks
+*.keystore
+*.p12
+*.pem
+*-release.properties
