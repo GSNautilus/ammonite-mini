@@ -16,7 +16,7 @@ inline float Clamp01(float v) { return Clamp(v, 0.f, 1.f); }
 inline float MidiToHz(float m) { return 440.f * std::exp2((m - 69.f) / 12.f); }
 
 /* ------------------------------------------------------------------ curves */
-// 0..1 parameters to their units (docs/PHASE2_ENGINE.md section 2).
+// 0..1 parameters to their units.
 inline float AttackSeconds(float v) { return 0.001f * std::exp2(v * 12.f); }       // 1 ms .. 4 s
 inline float DecaySeconds(float v) { return 0.005f * std::exp2(v * 9.64f); }       // 5 ms .. 4 s
 inline float PitchDecaySeconds(float v) { return 0.005f * std::exp2(v * 7.64f); }  // 5 ms .. 1 s

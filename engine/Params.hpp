@@ -1,9 +1,9 @@
 /** The parameter table of Ammonite Desktop: every parameter, with a stable
- *  id that is never renumbered (docs/PHASE2_ENGINE.md section 2).
+ *  id that is never renumbered.
  *
  *  Ids 0..63 are global; slot s (0..15) owns 64 + 128 s .. 64 + 128 s + 127;
- *  the modulation pool owns 2112 .. 3135 (docs/PHASE4_BREADTH.md section
- *  8.2): 32 LFOs, the macros, 128 routes. Unused ids inside a block are
+ *  the modulation pool owns 2112 .. 3135:
+ *  32 LFOs, the macros, 128 routes. Unused ids inside a block are
  *  reserved: hidden parameters today, room for tomorrow. Adding a parameter
  *  means taking the next free index of its block, never moving an existing
  *  one. Retired ids (section 7's per-channel and global LFOs and routes) stay
@@ -206,7 +206,7 @@ enum SlotParam
     cMod1Src = cLfo2Shape + 6, // kRouteParams each: source, destination, amount
     cMod1Dest,
     cMod1Amt,
-    // which notes a pattern plays (docs/PHASE4_BREADTH.md section 9; ROTATE is cRhythmRotate, every generator's now)
+    // which notes a pattern plays (ROTATE is cRhythmRotate, every generator's now)
     cNoteShift = cMod1Src + 4 * 3,
     cNoteCount,
     cSeed,
@@ -597,8 +597,8 @@ inline float ClampParam(int id, float v)
     return v < d.min ? d.min : (v > d.max ? d.max : v);
 }
 
-/** The default patch: the hardware's three default arps, A minor, 110 BPM
- *  (docs/PHASE2_ENGINE.md section 2). Applied over the table defaults. */
+/** The default patch: the hardware's three default arps, A minor, 110 BPM.
+ *  Applied over the table defaults. */
 struct PatchEntry
 {
     int   slot, param;

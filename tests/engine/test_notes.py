@@ -1,4 +1,4 @@
-"""Which notes a pattern plays (docs/PHASE4_BREADTH.md section 9): ROTATE on
+"""Which notes a pattern plays: ROTATE on
 every generator through the shared step grid (Arp, Bass, Chord Steps and
 Arp; Rhythm's as before), SHIFT, COUNT (Steps, Hits; Chord's Arp counting
 from the change), SEED (the same notes every LENGTH, another seed another

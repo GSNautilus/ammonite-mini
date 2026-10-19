@@ -10,7 +10,7 @@
  *  SEED (every generator's dice): Free rolls the generator's own free-running
  *  dice, so a pattern never repeats; a seed n takes each roll from a hash of
  *  (n, the step's place, which roll), so the pattern repeats every LENGTH and
- *  another seed gives another one (docs/PHASE4_BREADTH.md section 9). */
+ *  another seed gives another one. */
 #pragma once
 
 #include "Clock.hpp"

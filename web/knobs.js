@@ -1,5 +1,4 @@
-/* Ammonite Desktop: the knob painter and the faces (docs/DESKTOP_PLAN.md
-   section 6.2), ported from docs/desktop-prototype/ammo-light.js. The face
+/* Ammonite Desktop: the knob painter and the faces. The face
    is a screen showing what the knob makes, in the voice's color; the value
    ring around it; the value text under the knob, never over the face.
 

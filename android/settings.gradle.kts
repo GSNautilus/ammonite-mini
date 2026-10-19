@@ -1,4 +1,4 @@
-// Ammonite Mini, the Android app (docs/MINI_PLAN.md section 3). Built by mini.ps1 (apk | install | run).
+// Ammonite Mini, the Android app. Built by mini.ps1 (apk | install | run).
 pluginManagement {
     repositories {
         google()

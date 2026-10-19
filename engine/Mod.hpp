@@ -1,4 +1,4 @@
-/** Modulation (docs/PHASE4_BREADTH.md sections 7 and 8.2): one pool of
+/** Modulation: one pool of
  *  sources, LFOs and macros, and the routes that take them to parameters.
  *
  *  Sources: up to 32 LFOs and 16 macros (0..1), none belonging to a

@@ -1,4 +1,4 @@
-"""Modulation (engine/Mod.hpp, the pool of docs/PHASE4_BREADTH.md section 8.2):
+"""Modulation (engine/Mod.hpp):
 what a route can take (every continuous channel parameter, the global ones,
 nothing stepped); the LFOs read from telemetry (Tempo locked to the beat,
 Free at its rate, phase, every shape, Random held per cycle, restart on a

@@ -1,4 +1,4 @@
-/** Ammonite Mini's bridge: between the page and the engine, with no platform code (docs/MINI_PLAN.md section 3).
+/** Ammonite Mini's bridge: between the page and the engine, with no platform code.
  *  The portable part of desktop's AmmoniteUI.cpp (ammonite 69f0980): the page's one-line messages in, the
  *  JavaScript to run out. The platform does the rest through AmmoBridgeHost's callbacks: run JS in the page,
  *  show a Save or Open picker, hear of a finished recording, log.

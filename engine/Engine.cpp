@@ -52,7 +52,7 @@ bool IsRetiredId(int id)
     return IsSlotId(id, slot, p) && p >= kFirstRetiredSlotParam && p < kEndRetiredSlotParam;
 }
 
-/** A version 2 chunk's modulation into the pool (docs/PHASE4_BREADTH.md section 8.7): every live route becomes a
+/** A version 2 chunk's modulation into the pool: every live route becomes a
  *  pool route (bipolar, on the same slot parameter), in the order slot 1 route 1 .. slot 16 route 4; each LFO such
  *  a route takes becomes a pool LFO the first time it is met (a channel's LFO with Restart Note restarts on that
  *  channel's notes; a global one runs free of notes); a routed macro is marked in use. LFOs no live route takes
@@ -124,7 +124,7 @@ void ConvertV2(float* v)
 }
 
 /** A chunk before version 4: ROTATE was the Rhythm generator's alone, so a value another generator's channel kept
- *  (set while it was a Rhythm) goes back to 0, and the channel plays as it did (docs/PHASE4_BREADTH.md section 9). */
+ *  (set while it was a Rhythm) goes back to 0, and the channel plays as it did. */
 void ConvertV3(float* v)
 {
     for(int s = 0; s < kSlots; s++)

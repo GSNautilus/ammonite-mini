@@ -1,6 +1,6 @@
 /** The engine: 16 channel slots, the conductor, the shared reverb, the master bus, parameters
  *  by stable id, the state chunk and the telemetry ring. No plugin or UI
- *  knowledge; see docs/PHASE2_ENGINE.md. */
+ *  knowledge. */
 #pragma once
 
 #include "Channel.hpp"

@@ -1,5 +1,4 @@
-/* Ammonite Mini's native side: the engine playing through Oboe, the bridge to the page, and a bench
-   (docs/MINI_PLAN.md sections 3 and 4).
+/* Ammonite Mini's native side: the engine playing through Oboe, the bridge to the page, and a bench.
 
    Play: an Oboe stream (AAudio, low latency, shared (the exclusive MMAP path is silent on this tablet), float stereo at the device's rate) whose
    callback runs ammo_process with the bridge's transport as a clock with no tempo or position (valid 0), so the

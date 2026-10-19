@@ -1,7 +1,7 @@
 /** Recording the master output: the engine's RecordTap (written at the end
  *  of every block while armed, by the audio thread) and a WavWriter that a
  *  reader on another thread drains it into (the plugin's UI tick, or the C
- *  API's drain thread for the tests). docs/PHASE4_BREADTH.md section 3. */
+ *  API's drain thread for the tests). */
 #pragma once
 
 #include <atomic>

@@ -27,12 +27,12 @@
                  key <down> <vk> <repeat> | gl ok ... | gl fail ... | log ...
    A patch file carries the page's own state with the engine's (pageState(), ammo.page). Ctrl+S, Ctrl+O, R and B
    are the page's keys (save, open, record, the pin bar); every other key goes to the host.
-   The pin bar (PHASE4_BREADTH 8.5): any knob or fader pinned (right-click, a long press by touch, or its pin on
+   The pin bar: any knob or fader pinned (right-click, a long press by touch, or its pin on
    hover) gets a copy along the bottom of the stage, beside the panel, so the panel collapsed to its rail and the bar
    open make a playing view.
    In a plain browser, dev.html loads fake-engine.js to stand in for the host.
 
-   Mini mode (PHASE4_BREADTH 8.8): the same page is Ammonite Mini's, on an Android tablet. Mini's own index.html and
+   Mini mode: the same page is Ammonite Mini's, on an Android tablet. Mini's own index.html and
    dev.html set window.AMMO_MINI = true before any script loads (they also leave out the stage canvas and
    shells.js); everything else is this page, copied into Mini's repo as it is. MINI then: no stage, camera, motion
    layer or stage FX (no Shells at all), no Visual tab, no eyes or channel VISUAL group, no rail or dock; the panel
@@ -61,7 +61,7 @@
   var SCALE_IV = [[0, 2, 4, 5, 7, 9, 11], [0, 2, 3, 5, 7, 8, 10], [0, 2, 3, 5, 7, 9, 10], [0, 1, 3, 5, 7, 8, 10], [0, 2, 4, 6, 7, 9, 11],
                   [0, 2, 4, 5, 7, 9, 10], [0, 2, 3, 5, 7, 8, 11], [0, 2, 4, 7, 9], [0, 3, 5, 7, 10], [0, 3, 5, 6, 7, 10]];
   var QUAL = ['', 'm', 'dim', 'aug', 'sus'];
-  /* modulation (engine/Mod.hpp, docs/PHASE4_BREADTH.md section 8.2): one pool of sources, up to 32 LFOs and 16 macros,
+  /* modulation (engine/Mod.hpp): one pool of sources, up to 32 LFOs and 16 macros,
      none belonging to a channel, and 128 routes (source, target, amount, polarity), saved with the patch but not host
      parameters. A route adds amount x source to its target's place in its range: Bipolar an LFO swings around the knob,
      Unipolar it goes up from it (down for a negative amount); a macro is 0..1 either way. An LFO or macro is in use
@@ -188,7 +188,7 @@
   var VPCHAN = [['Render', 'v_mode', 0, 2, 0, 3, ['Surface', 'Particles', 'Both']], ['Density', 'v_pdens', 0, 1, 0.5, 0], ['Scatter', 'v_pscat', 0, 1, 0.08, 0],
                 ['Jitter', 'v_pjit', 0, 1, 0.3, 0], ['Color jitter', 'v_pcol', 0, 1, 0.25, 0], ['Point size', 'v_psize', 1, 8, 2.5, 0], ['Softness', 'v_psoft', 0, 1, 0.6, 0],
                 ['Fill', 'v_pfill', 0, 1, 0, 0]];
-  /* The scope (2026-10-13, PHASE4_BREADTH 8.6): the stage as an oscilloscope, one lane per channel. A block of its
+  /* The scope: the stage as an oscilloscope, one lane per channel. A block of its
      own past the particles' (VSCBASE, room for 32), so no saved id moves; a state saved before it takes the
      defaults: the 3D form, as it was. */
   var VSCBASE = VBASE + 768;
@@ -541,7 +541,7 @@
       '<button class="pinbtn" data-pintog="' + id + '" aria-pressed="' + pinned(id) + '" title="Pin to the bar (or right-click the knob)">' + PIN_SVG + '</button></div>';
   }
 
-  /* ---- the pin bar (PHASE4_BREADTH 8.5): up to PIN_MAX knobs and faders, each a copy of the panel's (the same id,
+  /* ---- the pin bar: up to PIN_MAX knobs and faders, each a copy of the panel's (the same id,
      so dragging, the wheel, double-click, assigning, tags and rings all work on it), labelled by where it lives in
      its channel's or its source's colour; dim while its channel (or LFO, or macro) is off, kept. Right-click one (a
      long press by touch) for Pin / Unpin; drag a pin's label along the bar to move it. */
@@ -746,7 +746,7 @@
         'switching this on shuts everything but the last one opened">One at a time</button></div></div>';
   }
   /** A section's body: its view on the left, its knobs (up to six) on the right. */
-  /** PATTERN's second row, under the first's knobs (docs/PHASE4_BREADTH.md section 9): which notes the pattern plays.
+  /** PATTERN's second row, under the first's knobs: which notes the pattern plays.
       `cells` are knobs (Rotate, Shift, Seed: the generator's); `count` the COUNT chips' Auto (1 Steps, 2 Hits) or 0
       for none. */
   function noteRow(s, cells, count) {
@@ -2696,7 +2696,7 @@
     return fx;
   }
   /* ------------------------------------------------------------ the scope
-     The stage's other mode (STAGE · MODE, PHASE4_BREADTH 8.6): an oscilloscope, one lane per channel shown and
+     The stage's other mode (STAGE · MODE): an oscilloscope, one lane per channel shown and
      playing, stacked top to bottom in channel order in the room the panel leaves, sharing its height. Each lane is
      the channel's wave as the telemetry sends it (one period, phase-locked to the channel's first voice, scaled to
      its peak), drawn Cycles times across, in the channel's colour (COLOR's Palette and Cycle too), with a faint

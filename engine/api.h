@@ -1,6 +1,6 @@
 /* The C API of the Ammonite Desktop engine (ammonite_engine.dll): what the
  * Python tests, tools and later the standalone call. Plain C structs so
- * ctypes mirrors them 1:1. See docs/PHASE2_ENGINE.md section 3. */
+ * ctypes mirrors them 1:1. */
 #ifndef AMMONITE_ENGINE_API_H
 #define AMMONITE_ENGINE_API_H
 

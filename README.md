@@ -79,7 +79,7 @@ the screen off or in the background, pausing for calls and other apps' audio,
 following headphones or a USB interface plugged in while it plays, copying
 recordings out of the app's own folder (they stay in
 `Android/data/com.ammonite.mini/files/Music/Recordings`), and an icon of its
-own. The plan and its status: [`docs/MINI_PLAN.md`](docs/MINI_PLAN.md).
+own.
 
 ## Where it came from
 
@@ -96,7 +96,7 @@ Engine and page changes are made in `ammonite`, never here. **The engine** is
 copied whole with its tests: copy both folders again and run
 `mini.ps1 test`. **The page is shared:** Mini's `index.html` and `dev.html`
 set `window.AMMO_MINI = true` before any script loads, which puts the page in
-its Mini mode (`ammonite`'s `docs/PHASE4_BREADTH.md` 8.8). To update it, after
+its Mini mode. To update it, after
 a change committed in `ammonite` (desktop mode must not change):
 
 ```powershell

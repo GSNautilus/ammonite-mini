@@ -1,6 +1,6 @@
 <#
 .SYNOPSIS
-  Build, test and serve Ammonite Mini (docs/MINI_PLAN.md).
+  Build, test and serve Ammonite Mini.
 
 .DESCRIPTION
   Python: $env:AMMONITE_PYTHON if set (a python.exe with numpy), else the

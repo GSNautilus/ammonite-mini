@@ -1,5 +1,5 @@
 /** Factory presets: Init, the default patch, and the hardware's manual
- *  recipes translated to this engine (docs/PHASE3_PLAYABLE.md section 2).
+ *  recipes translated to this engine.
  *  A preset is the table defaults plus a list of (id, value). Hardware
  *  drones (arp OFF) become Loop at 1/1, gate 1, sustain 1, glide; the
  *  hardware's DELAY SEND becomes the channel's delay MIX (its power-on
