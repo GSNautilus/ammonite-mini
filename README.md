@@ -11,6 +11,10 @@
   <a href="https://gsnautilus.github.io/ammonite/">The Ammonite family</a>
 </p>
 
+<p align="center">
+  <a href="https://gsnautilus.github.io/ammonite/mini/"><img src="https://gsnautilus.github.io/ammonite/mini/img/channels.webp" width="100%" alt="Ammonite Mini on the tablet playing Night groove: six channels of drums, bass and chords, each drawing its waveform"></a>
+</p>
+
 ---
 
 Ammonite is a generative arpeggiator synthesizer: you never pick notes, you
@@ -116,8 +120,7 @@ Visual Studio Build Tools 2022 (MSVC, CMake, Ninja), as for Desktop:
 .\mini.ps1 test    # build, then tests\engine\test_*.py and tests\bridge against it
 ```
 
-Python with numpy: `$env:AMMONITE_PYTHON`, else the `codex` conda env's,
-else `python`.
+Python with numpy: `$env:AMMONITE_PYTHON` if set, else `python`.
 
 ## The Android app
 
@@ -165,4 +168,5 @@ sound).
 
 ## License
 
-MIT, as Ammonite: see [`LICENSE`](LICENSE).
+MIT, as Ammonite: see [`LICENSE`](LICENSE). Oboe, AndroidX and the other libraries in the
+app are Apache-2.0: see [`THIRD-PARTY.md`](THIRD-PARTY.md).
